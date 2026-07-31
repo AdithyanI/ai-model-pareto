@@ -118,6 +118,15 @@ measured latency instead and does not approximate the missing metric.
 
 ## Decisions
 - Artificial Analysis's structured payload, not screenshot OCR, is canonical.
+- **The landing page is the chart and nothing else.** It fills the viewport;
+  the prose, the worked example and the method notes moved to `read.html`
+  behind one link. Adi's instruction was blunt about it — only the main chart,
+  self-describing, taking the full page. So the chart has to carry its own
+  caption, axis names, direction cues and legend, because nothing around it
+  explains anything any more.
+- **Selecting a point opens a panel beside the chart, not over it.** An overlay
+  would hide the rivals the panel is talking about. The plot re-measures and
+  redraws narrower instead.
 - **The rotatable 3D view is gone; the split view replaces it.** The cube was
   honest and nearly unusable — under orthographic projection nobody can tell
   which of two dots is nearer, which is exactly the judgement the third axis
@@ -299,3 +308,15 @@ measured latency instead and does not approximate the missing metric.
   the camera-angles-as-destination section and gained the deadline
   decomposition with both directions of the argument, and `AGENTS.md` records
   the cache-stamping requirement.
+- 2026-07-31: [DONE] Split the site in two. The landing page is now the chart
+  at full viewport height with a compact top bar and nothing to read; every
+  word of explanation and the worked example moved to `read.html`. The
+  selection card became a panel beside the plot rather than a block under it,
+  and shared filtering, dominance and worked-example logic moved to
+  `web/lib/analysis.mjs` so the two pages cannot quote different numbers.
+- 2026-07-31: [FIXED] Two layout bugs found in verification. Widening the
+  window after the split view had stacked left the chart latched at its narrow
+  width, because the stacked rule took the canvas out of horizontal flex and
+  its own width was then the width that made it stack. And the three-line
+  vertical axis block collided with the topmost tick label on a phone, which
+  only mattered once the chart became the whole page.

@@ -16,9 +16,25 @@ whether the three dimensions can be understood together.
    that affects a number on the page.
 3. `web/lib/pareto.mjs` — the dominance core. Shared by the Node build and the
    browser, so `test/pareto.test.mjs` covers both.
-4. `web/lib/budgets.mjs` — the split view's decomposition, and the proof sketch
+4. `web/lib/analysis.mjs` — filtering, fronts, counts and the worked example.
+   Both pages import it, so they cannot quote different numbers.
+5. `web/lib/budgets.mjs` — the split view's decomposition, and the proof sketch
    for why it reproduces the three-way frontier exactly.
-5. `src/build-snapshot.mjs` — turns the live source into `web/data/snapshot.json`.
+6. `src/build-snapshot.mjs` — turns the live source into `web/data/snapshot.json`.
+
+## Shape of the site
+
+Two pages, and the split is deliberate.
+
+| Page | Carries |
+| --- | --- |
+| `web/index.html` + `app.mjs` | The chart, at the size of the window. Nothing to read. |
+| `web/read.html` + `read.mjs` | Every word of explanation, plus the worked example. |
+
+The landing page is the chart: a compact top bar, the plot filling the
+viewport, a legend and the attribution. A reader who wants prose follows one
+link. Adding explanatory copy back to the landing page defeats the point —
+put it in `read.html`.
 
 ## Commands
 

@@ -1,9 +1,11 @@
 import { Scene } from "./lib/scene.mjs";
 import { Panels } from "./lib/panels.mjs";
-import { budgetPanels } from "./lib/budgets.mjs";
 import { AXES, formatCost, formatSeconds, formatRatio } from "./lib/axes.mjs";
-import { VIEWS, VIEW_ORDER, makeScale, shortestAngle, easeInOutCubic } from "./lib/projection.mjs";
-import { paretoFront, dominates, OBJECTIVES } from "./lib/pareto.mjs";
+import { VIEWS, VIEW_ORDER } from "./lib/projection.mjs";
+import { shortestAngle, easeInOutCubic } from "./lib/projection.mjs";
+import { OBJECTIVES } from "./lib/pareto.mjs";
+import { loadSnapshot, filterRows, analyse, bestRival } from "./lib/analysis.mjs";
+import { escapeHtml } from "./lib/html.mjs";
 
 const $ = (sel) => document.querySelector(sel);
 const canvas = $("#plot");
@@ -17,16 +19,14 @@ const state = {
   scope: "representative",
   selected: null,
   animation: null,
-  rows: [],
+  model: null,
 };
 
 const isPanelView = (id = state.view) => VIEWS[id].kind === "panels";
-
 const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
 async function boot() {
-  const res = await fetch("./data/snapshot.json");
-  state.data = await res.json();
+  state.data = await loadSnapshot();
   buildControls();
   rebuild();
   renderLegend();
@@ -48,6 +48,10 @@ async function boot() {
  * Measure, then let the stacked layout claim the height it needs, then measure
  * again. Changing the height cannot change the width, so `compact` is settled
  * on the first pass and this converges immediately.
+ *
+ * The chart fills the viewport, so the one case that cannot is three panels
+ * stacked on a phone: `chart-stacked` on the body releases the page to scroll
+ * rather than squeezing three charts into a third of a screen each.
  */
 function resize() {
   const wrap = $(".canvas-wrap");
@@ -55,111 +59,37 @@ function resize() {
   panels.resize();
   wrap.classList.toggle("is-panels", isPanelView());
   wrap.classList.toggle("is-stacked", panels.compact);
+  document.body.classList.toggle("chart-stacked", isPanelView() && panels.compact);
   scene.resize();
   panels.resize();
 }
 
-/** Rows currently in scope, with the active latency resolved onto `time`. */
-function activeRows() {
-  return state.data.rows.filter((r) => {
-    if (!Number.isFinite(r.latencies[state.latency])) return false;
-    if (state.scope === "representative" && !r.representative) return false;
-    if (state.scope === "open" && !r.openWeights) return false;
-    return true;
-  });
-}
-
 function rebuild() {
-  const rows = activeRows();
-  for (const r of rows) r.time = r.latencies[state.latency];
-  state.rows = rows;
+  const rows = filterRows(state.data, { latency: state.latency, scope: state.scope });
+  state.model = analyse(rows);
 
-  // Dominance is recomputed against exactly the configurations on screen, so a
-  // point is never greyed out by a rival the reader has filtered away.
-  const { intelligence, cost, time } = OBJECTIVES;
-  const ids = (front) => new Set(front.map((r) => r.id));
-  const f3d = ids(paretoFront(rows, [intelligence, cost, time]));
-  const fic = ids(paretoFront(rows, [intelligence, cost]));
-  const fit = ids(paretoFront(rows, [intelligence, time]));
-  const fct = ids(paretoFront(rows, [cost, time]));
-  state.fronts = { intelligenceCost: fic, intelligenceTime: fit, costTime: fct };
-
-  const scales = {
-    cost: makeScale(rows.map((r) => r.cost), { log: true }),
-    intelligence: makeScale(rows.map((r) => r.intelligence)),
-    time: makeScale(rows.map((r) => r.time), { log: true }),
-  };
-  state.scales = scales;
-
-  const points = rows.map((r) => {
-    const onFront = {
-      three: f3d.has(r.id),
-      intCost: fic.has(r.id),
-      intTime: fit.has(r.id),
-      costTime: fct.has(r.id),
-    };
-    // The finding: optimal in 3D, yet absent from both published flat charts.
-    const hiddenOptimal = onFront.three && !onFront.intCost && !onFront.intTime;
-    return {
-      id: r.id,
-      row: r,
-      onFront,
-      state: hiddenOptimal
-        ? "hidden"
-        : onFront.intCost || onFront.intTime || onFront.costTime
-          ? "front2d"
-          : onFront.three
-            ? "front3d"
-            : "dominated",
-      cube: {
-        x: scales.cost(r.cost),
-        y: scales.intelligence(r.intelligence),
-        z: scales.time(r.time),
-      },
-    };
-  });
-
-  scene.setPoints(points);
-  panels.setPoints(points);
-  state.points = points;
-  // The panels are the same finding, decomposed: the union of their frontiers
-  // is the three-way frontier exactly. See lib/budgets.mjs.
-  state.panels = budgetPanels(rows, state.fronts);
-  const revealed = new Set();
-  for (const panel of state.panels) for (const id of panel.revealed) revealed.add(id);
-
-  state.counts = {
-    plotted: points.length,
-    hidden: points.filter((p) => p.state === "hidden").length,
-    front3d: points.filter((p) => p.onFront.three).length,
-    frontIntCost: fic.size,
-    frontIntTime: fit.size,
-    revealedHere: revealed.size,
-  };
+  scene.setPoints(state.model.points);
+  panels.setPoints(state.model.points);
 
   // Keep any selection alive across a rebuild.
   if (state.selected) {
-    state.selected = points.find((p) => p.id === state.selected.id) ?? null;
+    state.selected = state.model.points.find((p) => p.id === state.selected.id) ?? null;
     scene.selected = state.selected;
     panels.selected = state.selected;
   }
 
-  renderFinding();
   renderDetail();
-  renderWorkedExample();
-  $("#view-caption").textContent = viewCaption(VIEWS[state.view]);
+  $("#view-caption").innerHTML = viewCaption(VIEWS[state.view]);
+  canvas.setAttribute("aria-label", altText());
 }
 
 function draw() {
+  const { scales, fronts, panels: budgets } = state.model;
   if (isPanelView()) {
-    panels.render({ panels: state.panels, scales: state.scales });
+    panels.render({ panels: budgets, scales });
     return;
   }
-  scene.render({
-    view: state.view,
-    scales: state.scales,
-    fronts: state.fronts,
-  });
+  scene.render({ view: state.view, scales, fronts });
 }
 
 /**
@@ -175,7 +105,7 @@ function goToView(id) {
   document.querySelectorAll("[data-view]").forEach((b) => {
     b.setAttribute("aria-pressed", String(b.dataset.view === id));
   });
-  $("#view-caption").textContent = viewCaption(target);
+  $("#view-caption").innerHTML = viewCaption(target);
   renderLegend();
   canvas.setAttribute("aria-label", altText());
   if (state.animation) cancelAnimationFrame(state.animation);
@@ -250,27 +180,31 @@ function buildControls() {
     rebuild();
     draw();
   });
-
 }
 
 /**
- * Lead the caption with how many models win the chart on screen. The whole
- * argument is that the two published charts disagree about the answer and
- * still both miss some, which only lands if the reader sees the counts move.
+ * The chart has to introduce itself, because it is the whole page. Lead with
+ * how many models win what is on screen: the argument is that the two
+ * published charts disagree about the answer and still both miss some, which
+ * only lands if the reader sees the count move as they switch.
  */
 function viewCaption(view) {
-  const c = state.counts;
+  const c = state.model.counts;
   if (view.kind === "panels") {
-    const list = state.panels ?? [];
+    const list = state.model.panels;
     const first = list[0];
     const last = list[list.length - 1];
     // With too small a field to cut, there is only the unlimited panel and no
     // contrast to describe.
-    if (list.length < 2) return view.caption;
-    return `${first.leaders.size} models are worth buying under ${first.label.replace("Under ", "")}, ${last.leaders.size} with no deadline at all \u2014 and they are not the same models.`;
+    if (list.length < 2) return escapeHtml(view.caption);
+    return (
+      `<b>${first.leaders.size} models</b> are the best buy under ` +
+      `${escapeHtml(first.label.replace("Under ", ""))}, <b>${last.leaders.size}</b> if you will ` +
+      `wait as long as it takes \u2014 and they are not the same models.`
+    );
   }
   const n = view.id === "intelligenceCost" ? c.frontIntCost : c.frontIntTime;
-  return `${n} models win this chart. ${view.caption}`;
+  return `<b>${n} models</b> win this chart. ${escapeHtml(view.caption)}`;
 }
 
 function select(point) {
@@ -278,6 +212,9 @@ function select(point) {
   scene.selected = point;
   panels.selected = point;
   renderDetail();
+  // The panel takes width from the chart rather than covering it, so the plot
+  // has to be re-measured whenever it opens or closes.
+  resize();
 }
 
 function setHovered(point) {
@@ -337,20 +274,16 @@ function wireInteraction() {
     const n = VIEW_ORDER.length;
     if (e.key === "ArrowRight") goToView(VIEW_ORDER[(idx + 1) % n]);
     if (e.key === "ArrowLeft") goToView(VIEW_ORDER[(idx + n - 1) % n]);
-    if (e.key === "Escape") {
+    if (e.key === "Escape" && state.selected) {
       select(null);
       draw();
     }
   });
 
   $("#detail").addEventListener("click", (e) => {
-    const el = e.target.closest("[data-pick]");
-    if (!el) return;
-    const point = state.points.find((p) => p.id === el.dataset.pick);
-    if (point) {
-      select(point);
-      draw();
-    }
+    if (!e.target.closest("[data-close]")) return;
+    select(null);
+    draw();
   });
 }
 
@@ -378,7 +311,7 @@ function tooltipHtml(p) {
 
 /** In the split view the useful extra fact is which deadlines it wins under. */
 function budgetLine(p) {
-  const wins = state.panels.filter((panel) => panel.leaders.has(p.id));
+  const wins = state.model.panels.filter((panel) => panel.leaders.has(p.id));
   if (wins.length === 0) return `<p class="tooltip-note">Beaten under every deadline shown.</p>`;
   // Echo the panel headings verbatim so the reader can find them on the chart.
   return `<p class="tooltip-note">Best value in: ${escapeHtml(
@@ -388,7 +321,7 @@ function budgetLine(p) {
 
 /** Where a value sits in the field, 0 worst to 1 best, on the plotted scale. */
 function goodness(row, key) {
-  const n = state.scales[key](row[key]);
+  const n = state.model.scales[key](row[key]);
   return AXES[key].dir > 0 ? (n + 1) / 2 : 1 - (n + 1) / 2;
 }
 
@@ -407,18 +340,22 @@ function renderDetail() {
   const el = $("#detail");
   const p = state.selected;
   if (!p) {
-    el.innerHTML = emptyDetailHtml();
+    el.hidden = true;
+    el.innerHTML = "";
     return;
   }
 
   const r = p.row;
+  const rows = state.model.rows;
   const rivals = {
-    intCost: bestRival(r, [OBJECTIVES.intelligence, OBJECTIVES.cost]),
-    intTime: bestRival(r, [OBJECTIVES.intelligence, OBJECTIVES.time]),
-    three: bestRival(r, [OBJECTIVES.intelligence, OBJECTIVES.cost, OBJECTIVES.time]),
+    intCost: bestRival(rows, r, [OBJECTIVES.intelligence, OBJECTIVES.cost]),
+    intTime: bestRival(rows, r, [OBJECTIVES.intelligence, OBJECTIVES.time]),
+    three: bestRival(rows, r, [OBJECTIVES.intelligence, OBJECTIVES.cost, OBJECTIVES.time]),
   };
 
+  el.hidden = false;
   el.innerHTML = `
+    <button class="detail-close" data-close type="button" aria-label="Close">&times;</button>
     <div class="detail-head">
       <div>
         <h3>${escapeHtml(r.shortName)}</h3>
@@ -475,7 +412,7 @@ function verdictHtml(p, rivals) {
         <p class="verdict-note">${
           shows.length
             ? `Visible on the ${escapeHtml(shows.join(" and "))} chart${shows.length > 1 ? "s" : ""}.`
-            : "Only the split view finds it."
+            : "Only the split chart finds it."
         }</p>
       </div>`;
   }
@@ -517,188 +454,15 @@ function compareWords(better, row) {
   return parts.length ? parts.join(", ") : "equal or better on every axis";
 }
 
-/** The most convincing rival: the one that dominates with the most intelligence. */
-function bestRival(row, objectives) {
-  let best = null;
-  for (const other of state.rows) {
-    if (other.id === row.id) continue;
-    if (!dominates(other, row, objectives)) continue;
-    if (!best || other.intelligence > best.intelligence) best = other;
-  }
-  return best;
-}
-
-/**
- * With nothing selected, answer the question a first-time reader actually has:
- * of the models that survive on all three axes, which is the pick?
- */
-function emptyDetailHtml() {
-  const front = state.points.filter((p) => p.onFront.three);
-  if (front.length === 0) return `<p class="detail-empty">No configurations in this filter.</p>`;
-
-  const pick = (label, fn, key) => {
-    const p = front.reduce((a, b) => (fn(b.row) > fn(a.row) ? b : a));
-    return `
-      <button class="pick" data-pick="${p.id}">
-        <span class="pick-l">${label}</span>
-        <span class="pick-n">${escapeHtml(p.row.shortName)}</span>
-        <span class="pick-v">${escapeHtml(AXES[key].format(p.row[key]))}</span>
-      </button>`;
-  };
-
-  return `
-    <p class="detail-lead">Of the ${front.length} that survive on all three axes:</p>
-    <div class="picks">
-      ${pick("Smartest", (r) => r.intelligence, "intelligence")}
-      ${pick("Cheapest", (r) => -r.cost, "cost")}
-      ${pick("Fastest", (r) => -r.time, "time")}
-    </div>
-    <p class="detail-empty">Pick any point on the chart to see what beats it, and what does not.</p>`;
-}
-
-function renderFinding() {
-  const c = state.counts;
-  $("#finding").innerHTML = `
-    <span class="figure"><b>${c.plotted}</b> models on the chart</span>
-    <span class="figure figure-front"><b>${c.front3d}</b> worth considering</span>
-    <span class="figure figure-hidden"><b>${c.hidden}</b> the flat charts hide</span>`;
-  $("#front-note").textContent =
-    `Of the ${c.plotted} configurations shown, ${c.frontIntCost} lead the smart-vs-cheap chart and ` +
-    `${c.frontIntTime} lead smart-vs-fast. Judge all three axes at once and ${c.front3d} survive, ` +
-    `of which ${c.hidden} appear on neither published chart.`;
-  canvas.setAttribute("aria-label", altText());
-}
-
-// ------------------------------------------------------------ worked example
-
-/**
- * Every rival that beats a hidden winner on a published chart is worse on the
- * axis that chart does not draw — and that is guaranteed, not observed. If any
- * of them were also no worse on the third axis it would beat the model
- * outright, and the model would not have survived the three-way test.
- *
- * So the honest figure to quote is the *smallest* penalty across all of them:
- * even the most favourable alternative that chart offers costs you this much.
- */
-function rivalSummary(row, objectives, thirdKey) {
-  const rivals = state.rows.filter((o) => o.id !== row.id && dominates(o, row, objectives));
-  if (rivals.length === 0) return null;
-  return {
-    // The one a reader would actually be steered to: the strongest of them.
-    pick: rivals.reduce((a, b) => (b.intelligence > a.intelligence ? b : a)),
-    count: rivals.length,
-    least: Math.min(...rivals.map((o) => o[thirdKey] / row[thirdKey])),
-  };
-}
-
-/** The clearest case to walk through: both penalties large, so neither is a rounding error. */
-function pickWorkedExample() {
-  const { intelligence, cost, time } = OBJECTIVES;
-  let best = null;
-  for (const p of state.points) {
-    if (p.state !== "hidden") continue;
-    const onCost = rivalSummary(p.row, [intelligence, cost], "time");
-    const onTime = rivalSummary(p.row, [intelligence, time], "cost");
-    if (!onCost || !onTime) continue;
-    const score = Math.min(onCost.least, onTime.least);
-    if (!best || score > best.score || (score === best.score && p.row.intelligence > best.p.row.intelligence)) {
-      best = { p, onCost, onTime, score };
-    }
-  }
-  return best;
-}
-
-function renderWorkedExample() {
-  const el = $("#worked");
-  const ex = pickWorkedExample();
-  if (!ex) {
-    el.hidden = true;
-    return;
-  }
-  el.hidden = false;
-  const r = ex.p.row;
-
-  const card = (role, row, worseKey, note) => `
-    <article class="worked-card${worseKey ? "" : " is-subject"}">
-      <p class="worked-role">${role}</p>
-      <h3>${escapeHtml(row.shortName)}</h3>
-      <dl class="worked-stats">
-        ${statRow("intelligence", row, worseKey)}
-        ${statRow("cost", row, worseKey)}
-        ${statRow("time", row, worseKey)}
-      </dl>
-      <p class="worked-note">${note}</p>
-    </article>`;
-
-  const penalty = (summary, key) => {
-    const noun = key === "time" ? "slower" : "dearer";
-    const ratio = formatRatio(summary.least);
-    if (summary.count === 1) {
-      return ratio
-        ? `the only model that beats it there is <b>${escapeHtml(ratio)} ${noun}</b>`
-        : `the only model that beats it there is ${noun}`;
-    }
-    return ratio
-      ? `every one of the <b>${summary.count}</b> that beat it there is ${noun} &mdash; even the
-         mildest by <b>${escapeHtml(ratio)}</b>`
-      : `every one of the <b>${summary.count}</b> that beat it there is ${noun}`;
-  };
-
-  el.innerHTML = `
-    <h2>One model, worked through</h2>
-    <p class="worked-lead">
-      <strong>${escapeHtml(r.shortName)}</strong> looks beaten on both published charts. It is not
-      beaten by anything.
-    </p>
-    <div class="worked-grid">
-      ${card(
-        "The model",
-        r,
-        null,
-        `Nothing in the field is at least as good on intelligence, price and speed together \u2014
-         and yet neither published chart puts it on its frontier.`,
-      )}
-      ${card(
-        "Smart vs cheap sends you to",
-        ex.onCost.pick,
-        "time",
-        `Smarter and no dearer &mdash; but that chart never drew the clock, and
-         ${penalty(ex.onCost, "time")}.`,
-      )}
-      ${card(
-        "Smart vs fast sends you to",
-        ex.onTime.pick,
-        "cost",
-        `Smarter and no slower &mdash; but that chart never drew the price, and
-         ${penalty(ex.onTime, "cost")}.`,
-      )}
-    </div>
-    <p class="worked-close">
-      Two different rivals, each winning by ignoring a different axis. Put all three on the table
-      and nothing in this field beats ${escapeHtml(r.shortName)} &mdash; which is why it shows up
-      the moment you name a deadline, and never on a chart that assumes you have none.
-    </p>`;
-}
-
-/** One line of the comparison, with the axis that chart ignored called out. */
-function statRow(key, row, worseKey) {
-  const meta = AXES[key];
-  const worse = key === worseKey;
-  return `
-    <div${worse ? ' class="is-worse"' : ""}>
-      <dt>${escapeHtml(meta.short)}</dt>
-      <dd>${escapeHtml(meta.format(row[key]))}</dd>
-    </div>`;
-}
-
 /**
  * A mark means something different in each view, so the legend is rebuilt with
  * the camera. On a flat chart a diamond is a winner of that chart; in the
- * rotated view it is a winner overall, and the second colour is the finding.
+ * split view it is a winner under that deadline, and the second colour is the
+ * finding.
  */
 function renderLegend() {
   const view = VIEWS[state.view];
-  const c = state.counts;
+  const c = state.model.counts;
   if (view.kind === "panels") {
     $("#legend").innerHTML = `
       <span class="key"><i class="swatch swatch-front"></i>Best value inside this deadline</span>
@@ -716,10 +480,10 @@ function renderLegend() {
 }
 
 function altText() {
-  const c = state.counts;
+  const c = state.model.counts;
   const v = VIEWS[state.view];
   if (v.kind === "panels") {
-    const parts = (state.panels ?? [])
+    const parts = state.model.panels
       .map((p) => `${p.label.toLowerCase()}: ${p.count} models qualify and ${p.leaders.size} lead`)
       .join("; ");
     return (
@@ -739,18 +503,8 @@ function altText() {
 function renderMeta() {
   const d = state.data;
   const when = new Date(d.capturedAt);
-  $("#meta").innerHTML = `Data captured ${when.toISOString().slice(0, 16).replace("T", " ")} UTC from
-    <a href="${d.source.url}" rel="noopener">${escapeHtml(d.source.name)}</a>.
-    ${d.counts.endpointsInSource} endpoints in source, ${d.counts.plotted} with complete
-    intelligence, cost and latency. Values are live and change; this page shows a snapshot.`;
-}
-
-
-function escapeHtml(s) {
-  return String(s).replace(
-    /[&<>"']/g,
-    (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[ch],
-  );
+  $("#meta").innerHTML = `${when.toISOString().slice(0, 10)} snapshot of
+    <a href="${d.source.url}" rel="noopener">${escapeHtml(d.source.name)}</a>. Values are live and change.`;
 }
 
 boot();

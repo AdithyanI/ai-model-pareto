@@ -87,7 +87,7 @@ export class Scene {
     // direction), which needs the same room whatever the viewport, because the
     // type does not shrink. Only the side margins compress.
     this.pad = isFlat
-      ? { left: c ? 40 : 52, right: c ? 18 : 34, top: c ? 44 : 52, bottom: c ? 70 : 66 }
+      ? { left: c ? 40 : 52, right: c ? 18 : 34, top: c ? 58 : 52, bottom: c ? 70 : 66 }
       : { left: 12, right: 12, top: 18, bottom: 18 };
     this.plot = {
       x0: this.pad.left,
@@ -378,11 +378,13 @@ export class Scene {
 
     // Vertical axis: set horizontally above the top of the axis. Rotated text
     // is measurably slower to read, and there is free space up there anyway.
+    // The block is three lines deep, so it has to clear the topmost tick
+    // label rather than merely clear the plot edge.
     const topY = Math.min(origin.y, vFar.y);
     this.axisTitle(
       c,
       this.compact ? 2 : 6,
-      topY - (this.compact ? 40 : 46),
+      topY - (this.compact ? 52 : 46),
       "left",
       vMeta,
       -vNear === betterEnd(vKey) ? "\u2191" : "\u2193",

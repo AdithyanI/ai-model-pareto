@@ -14,109 +14,51 @@
     <link rel="stylesheet" href="./tokens.css" />
     <link rel="stylesheet" href="./styles.css" />
   </head>
-  <body>
-    <main>
-      <header class="masthead">
-        <h1>Two charts, one object</h1>
-        <p class="standfirst">
-          Intelligence, cost and speed get published as two separate scatter plots, and each one
-          has to drop an axis to exist. Say how long you are willing to wait and the winners
-          change &mdash; including models that neither published chart can show, which turn out to
-          be among the best available.
-        </p>
+  <body class="app">
+    <div class="shell">
+      <header class="topbar">
+        <div class="brand">
+          <h1>Two charts, one object</h1>
+          <p class="brand-sub">
+            Intelligence, cost and speed are one trade-off. Each published chart drops an axis.
+          </p>
+        </div>
+        <div id="views" class="views" role="group" aria-label="Chart"></div>
+        <div class="tools">
+          <label class="control">
+            <span>Speed</span>
+            <select id="latency"></select>
+          </label>
+          <label class="control">
+            <span>Show</span>
+            <select id="scope">
+              <option value="representative">Best host per model</option>
+              <option value="all">Every model and host</option>
+              <option value="open">Open weights only</option>
+            </select>
+          </label>
+          <a class="read-link" href="./read.html">How this works &rarr;</a>
+        </div>
       </header>
 
-      <section class="stage" aria-label="Interactive model trade-off explorer">
-        <div class="stage-bar">
-          <div id="views" class="views" role="group" aria-label="Camera angle"></div>
-          <p id="view-caption" class="view-caption"></p>
-        </div>
+      <main class="stage" aria-label="Model trade-off chart">
+        <p id="view-caption" class="view-caption"></p>
 
-        <div class="canvas-wrap">
-          <canvas id="plot" role="img" aria-label="Loading chart"></canvas>
-          <div id="tooltip" class="tooltip" hidden></div>
-        </div>
-
-        <div class="stage-foot">
-          <div id="legend" class="legend"></div>
-          <p class="drag-hint">Hover a point to see what beats it &middot; arrow keys change view</p>
-        </div>
-      </section>
-
-      <section class="readout">
-        <div class="readout-main">
-          <div id="finding" class="finding"></div>
-          <div class="controls">
-            <label class="control">
-              <span>Speed measured as</span>
-              <select id="latency"></select>
-            </label>
-            <label class="control">
-              <span>Show</span>
-              <select id="scope">
-                <option value="representative">Best host per model</option>
-                <option value="all">Every model and host</option>
-                <option value="open">Open weights only</option>
-              </select>
-            </label>
+        <div class="plot-area">
+          <div class="canvas-wrap">
+            <canvas id="plot" role="img" aria-label="Loading chart"></canvas>
+            <div id="tooltip" class="tooltip" hidden></div>
           </div>
+          <aside id="detail" class="detail" aria-live="polite" hidden></aside>
         </div>
-        <div id="detail" class="detail"></div>
-      </section>
 
-      <section id="worked" class="worked" aria-label="Worked example" hidden></section>
-
-      <section class="prose">
-        <h2>Why a model can be best and still invisible</h2>
-        <p id="front-note" class="note"></p>
-        <p>
-          A model is worth considering when nothing else is at least as good on every axis you care
-          about. On a flat chart that test only runs on two axes, so a model can be dropped for
-          being slow by a chart that never priced it, and dropped for being expensive by a chart
-          that never timed it. The two rivals that condemned it are different models, and neither
-          beats it overall.
-        </p>
-
-        <h2>Why a deadline finds them</h2>
-        <p>
-          The published smart-vs-cheap chart quietly answers a question with no clock in it: which
-          model is the best buy if you are willing to wait forever? Say instead that you need an
-          answer inside ten seconds, and the chart you should be reading is the same one drawn over
-          only the models that fast &mdash; a different field, and a different frontier.
-        </p>
-        <p>
-          That is what the third view does, and it is not a summary of the three-way result. It is
-          the three-way result. Collect the leaders of every possible deadline and you get back
-          precisely the set that survives on all three axes at once &mdash; no more, no less. Both
-          halves follow from the same one-line argument: anything that beat a deadline&rsquo;s winner
-          outright would be no slower, so it would already be inside that deadline, beating it
-          there. Nothing is approximated and nothing is left over.
-        </p>
-
-        <h2>How to read it</h2>
-        <p>
-          Each point is one model configuration on one host, because price and speed belong to the
-          host rather than the model. The green line is that chart&rsquo;s frontier &mdash; the best
-          intelligence you can get at each price, or at each response time. Everything in the
-          shaded area is beaten by something on that line, so only the diamonds are marked.
-        </p>
-        <p>
-          Cost and time use logarithmic axes; the field spans orders of magnitude and a linear axis
-          would crush everything cheap into the margin. Nothing is interpolated. The frontier is
-          drawn as a staircase rather than a curve because the space between two models contains no
-          models &mdash; only the guarantee that a bigger budget never buys you less.
-        </p>
-        <p>
-          Dominance is recomputed against whatever is currently on screen, so a point is never
-          greyed out by a rival you have filtered away. The deadlines in the split view are taken
-          from the spread of response times in the field being shown rather than fixed in advance,
-          so they follow the latency measure you pick. The full method, including how the data is
-          read and why this latency measure, is in the
-          <a href="https://github.com/AdithyanI/ai-model-pareto/blob/main/docs/references/method.md" rel="noopener">method note</a>.
-        </p>
-        <p id="meta" class="meta"></p>
-      </section>
-    </main>
+        <footer class="stage-foot">
+          <div id="legend" class="legend"></div>
+          <p class="hint">Click a point to see what beats it &middot; arrow keys change chart</p>
+          <p id="meta" class="meta"></p>
+        </footer>
+      </main>
+    </div>
     <script type="module" src="./app.mjs"></script>
   </body>
 </html>
