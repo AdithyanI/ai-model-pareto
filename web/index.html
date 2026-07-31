@@ -6,7 +6,7 @@
     <title>Two charts, one object &middot; the AI model trade-off in three dimensions</title>
     <meta
       name="description"
-      content="Intelligence, cost and speed are usually shown as two flat charts. They are two camera angles on a single three-dimensional object, and some genuinely optimal models are invisible in both."
+      content="Intelligence, cost and speed are usually shown as two flat charts, each missing an axis. Name a response-time budget and the winners change — and some genuinely optimal models appear on neither published chart."
     />
     <link rel="icon" href="./favicon.svg" type="image/svg+xml" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
@@ -19,9 +19,10 @@
       <header class="masthead">
         <h1>Two charts, one object</h1>
         <p class="standfirst">
-          Intelligence, cost and speed get published as two separate scatter plots. They are two
-          camera angles on the same three-dimensional object &mdash; so rotate it, and models that
-          neither chart can show turn out to be among the best available.
+          Intelligence, cost and speed get published as two separate scatter plots, and each one
+          has to drop an axis to exist. Say how long you are willing to wait and the winners
+          change &mdash; including models that neither published chart can show, which turn out to
+          be among the best available.
         </p>
       </header>
 
@@ -38,7 +39,7 @@
 
         <div class="stage-foot">
           <div id="legend" class="legend"></div>
-          <p class="drag-hint">Drag to rotate &middot; arrow keys change view</p>
+          <p class="drag-hint">Hover a point to see what beats it &middot; arrow keys change view</p>
         </div>
       </section>
 
@@ -63,6 +64,8 @@
         <div id="detail" class="detail"></div>
       </section>
 
+      <section id="worked" class="worked" aria-label="Worked example" hidden></section>
+
       <section class="prose">
         <h2>Why a model can be best and still invisible</h2>
         <p id="front-note" class="note"></p>
@@ -71,15 +74,31 @@
           about. On a flat chart that test only runs on two axes, so a model can be dropped for
           being slow by a chart that never priced it, and dropped for being expensive by a chart
           that never timed it. The two rivals that condemned it are different models, and neither
-          beats it overall. Rotate to all three axes and it survives: those are the orange diamonds.
+          beats it overall.
+        </p>
+
+        <h2>Why a deadline finds them</h2>
+        <p>
+          The published smart-vs-cheap chart quietly answers a question with no clock in it: which
+          model is the best buy if you are willing to wait forever? Say instead that you need an
+          answer inside ten seconds, and the chart you should be reading is the same one drawn over
+          only the models that fast &mdash; a different field, and a different frontier.
+        </p>
+        <p>
+          That is what the third view does, and it is not a summary of the three-way result. It is
+          the three-way result. Collect the leaders of every possible deadline and you get back
+          precisely the set that survives on all three axes at once &mdash; no more, no less. Both
+          halves follow from the same one-line argument: anything that beat a deadline&rsquo;s winner
+          outright would be no slower, so it would already be inside that deadline, beating it
+          there. Nothing is approximated and nothing is left over.
         </p>
 
         <h2>How to read it</h2>
         <p>
           Each point is one model configuration on one host, because price and speed belong to the
-          host rather than the model. On a flat chart the green line is that chart&rsquo;s frontier &mdash;
-          the best intelligence you can get at each price, or at each response time. Everything in
-          the shaded area is beaten by something on that line, so only the diamonds are marked.
+          host rather than the model. The green line is that chart&rsquo;s frontier &mdash; the best
+          intelligence you can get at each price, or at each response time. Everything in the
+          shaded area is beaten by something on that line, so only the diamonds are marked.
         </p>
         <p>
           Cost and time use logarithmic axes; the field spans orders of magnitude and a linear axis
@@ -89,7 +108,9 @@
         </p>
         <p>
           Dominance is recomputed against whatever is currently on screen, so a point is never
-          greyed out by a rival you have filtered away. The full method, including how the data is
+          greyed out by a rival you have filtered away. The deadlines in the split view are taken
+          from the spread of response times in the field being shown rather than fixed in advance,
+          so they follow the latency measure you pick. The full method, including how the data is
           read and why this latency measure, is in the
           <a href="https://github.com/AdithyanI/ai-model-pareto/blob/main/docs/references/method.md" rel="noopener">method note</a>.
         </p>

@@ -79,7 +79,8 @@ measured latency instead and does not approximate the missing metric.
       justified — `docs/references/method.md`.
 - [x] The 3D Pareto set is computed and independently sanity-checked.
 - [x] A treatment is understandable without explanatory gymnastics — the
-      default view opens on the familiar published chart and lifts into 3D.
+      default view opens on the familiar published chart, and the third view
+      splits it by response-time deadline rather than asking for rotation.
 - [x] A lightweight interactive prototype demonstrates the linked views.
 - [ ] Adi has approved an execution-ready reply and visual; posting to X stays
       a separate explicit-confirmation action.
@@ -94,9 +95,12 @@ measured latency instead and does not approximate the missing metric.
       carries intelligence, cost, latency, identity, provider, timestamp and
       dominance status. Validated by `npm test` (13 tests), including the
       invariant that the 3D front is a superset of every 2D front.
-- [x] Milestone 3 — Compare visual directions. Resolved by building the views
-      as one orthographic scene at different camera angles, so the 2D charts
-      are literally the 3D object seen down an axis. Verified in-browser.
+- [x] Milestone 3 — Compare visual directions. Resolved twice. First as one
+      orthographic scene at different camera angles, so the 2D charts are
+      literally the 3D object seen down an axis. Then, after the rotatable view
+      proved unreadable in use, replaced with a split by response-time deadline
+      that reproduces the three-way frontier exactly. Verified in-browser at
+      desktop and 390px, light and dark, across all nine filter combinations.
 - [ ] Milestone 4 — Prepare the reply package. Acceptance: final static image,
       accessible alt text, concise reply copy, methodology note, and a fresh
       data recheck, all ready for Adi's approval.
@@ -114,10 +118,35 @@ measured latency instead and does not approximate the missing metric.
 
 ## Decisions
 - Artificial Analysis's structured payload, not screenshot OCR, is canonical.
+- **The rotatable 3D view is gone; the split view replaces it.** The cube was
+  honest and nearly unusable — under orthographic projection nobody can tell
+  which of two dots is nearer, which is exactly the judgement the third axis
+  demands, and Adi said so directly ("it's not at all intuitive to me"). Five
+  directions were mocked up from real data (colour-mapped scatter, a quiet
+  two-ramp variant, small multiples, a coloured-axis 3D, and a worked example)
+  and small multiples won.
+- **The split view is exact, not a simplification.** The union over all
+  response-time budgets of the within-budget smart-vs-cheap frontiers is
+  *identically* the three-way frontier — 34 = 34 on the current snapshot, with
+  nothing in one and not the other. Proof sketch and both directions are in
+  `web/lib/budgets.mjs`; two tests assert it. This is what makes the panels
+  legitimate rather than a per-bin frontier that would fail to reconcile with
+  the headline count.
+- **Deadlines are derived from the field, not hard-coded.** Cuts sit at roughly
+  the 20th and 50th percentile of response time, rounded to a sayable number,
+  and a cut that would leave a panel under eight models is dropped. A fixed 8s
+  is a good cut for end-to-end response and a nonsense one for
+  time-to-first-token, and the latency measure is reader-selectable.
+- **Panels are headed with the reader's question, not a bucket.** "Under 8s" is
+  a decision someone makes; "8–15s" is a bin invented by whoever drew the
+  chart. The panels are nested rather than disjoint, because that is what being
+  fast enough actually means.
 - **Every view is the same scene at a different camera angle**, rendered
   orthographically. This is load-bearing: with no perspective foreshortening,
   the flat views are exact 2D scatters, which makes "the published charts are
-  camera angles" literal rather than a metaphor. Do not switch to perspective.
+  camera angles" literal rather than a metaphor. It now shows up as the
+  rotation *between* the two published charts rather than as a destination view.
+  Do not switch to perspective.
 - Default latency is `endToEnd` (request sent to last token received, long
   prompt). It has full coverage and answers "when do I have the whole answer?".
   `firstAnswerToken` and `longContext` are selectable.
@@ -126,10 +155,10 @@ measured latency instead and does not approximate the missing metric.
 - Dominance is recomputed client-side against what is currently on screen. A
   point is never greyed out by a rival the reader has filtered away.
 - No connecting surface across the frontier; the gaps contain no models.
-- **Each view marks only its own winners.** Marking the 3D-optimal set on a
-  flat chart was built, shown to Adi, and removed: it places emphasis inside
+- **Each view marks only its own winners.** Marking the three-way optimal set on
+  a flat chart was built, shown to Adi, and removed: it places emphasis inside
   the region that same chart shades as beaten, which reads as a contradiction.
-  The reveal now happens only in the rotated view, where it is true.
+  The reveal now happens only in the split view, where it is true.
 - **The frontier is drawn as a staircase**, never a curve. A diagonal join
   would assert intermediate models that do not exist; the staircase asserts
   only that a bigger budget never buys less.
@@ -147,9 +176,10 @@ measured latency instead and does not approximate the missing metric.
 
 ## Open Questions / Blockers
 - Which single frame best carries the finding as a static X image: the familiar
-  int-vs-cost chart with the hidden winners ringed, or a slightly rotated 3D
-  view that shows depth is real? Leaning to the former with an obvious rotate
-  affordance in the linked site.
+  int-vs-cost chart with the hidden winners ringed, or the three-panel split
+  that shows tightening the deadline changing who wins? The split is now the
+  stronger candidate — it carries the argument without needing interaction —
+  but it has to survive being shrunk to feed size.
 - ~~Does the highlight survive colour-vision deficiency?~~ Resolved for the
   live site: the two roles sit ~13 lightness points and ~130 degrees of hue
   apart in light mode and ~15 apart in dark, and shape (diamond versus dot)
@@ -161,7 +191,7 @@ measured latency instead and does not approximate the missing metric.
 ## Current Batch
 | Status | Work Item | Role | Resource |
 | --- | --- | --- | --- |
-| todo | Build the static X-image export path from the live scene | agent | `web/lib/scene.mjs` |
+| todo | Build the static X-image export path from the live scene | agent | `web/lib/scene.mjs`, `web/lib/panels.mjs` |
 | todo | Draft reply copy and alt text with attribution, for Adi's review | agent | This tracker |
 | todo | Recheck live data immediately before export | agent | `npm run snapshot` |
 | blocked | Post the reply | Adi | Needs explicit confirmation |
@@ -170,7 +200,7 @@ measured latency instead and does not approximate the missing metric.
 - [ ] Static export at X feed dimensions, legible on mobile.
 - [ ] Alt text describing the finding, not just the chart type.
 - [x] Colour-accessibility check of the highlight against the frontier colour.
-- [x] Mobile visual pass on the live site (390x844, both flat views and 3D).
+- [x] Mobile visual pass on the live site (390x844, all three views).
 - [ ] Decide whether to surface `preferenceMap`.
 - [ ] Recheck source values immediately before final export.
 - [ ] Adi's explicit approval before posting.
@@ -233,3 +263,39 @@ measured latency instead and does not approximate the missing metric.
 - 2026-07-31: [FIXED] Dark mode had the frontier and reveal colours only 2
   lightness points apart, silently breaking the colour-blindness guarantee that
   holds in light mode. Now ~15 apart.
+- 2026-07-31: [DONE] Mocked five visual directions from the real snapshot after
+  Adi said the 3D view was "not at all intuitive": a colour-mapped scatter, a
+  quieter two-ramp variant, small multiples by deadline, a coloured-axis 3D,
+  and a single worked example. Small multiples won — position is the one visual
+  channel a reader judges accurately, and it is the only option that keeps all
+  three dimensions without asking anyone to decode a legend.
+- 2026-07-31: [FOUND] The split is exact, not a compromise. The union over all
+  response-time budgets of the within-budget smart-vs-cheap frontiers equals
+  the three-way frontier identically — 34 = 34 on the live snapshot, nothing in
+  one and not the other, provable in both directions. This is stronger than the
+  8-of-11 figure quoted to Adi from round-number budgets alone, and it is what
+  makes the panel counts reconcile with the headline. Locked in two tests.
+- 2026-07-31: [DONE] Replaced the rotatable 3D view with a three-panel split
+  (`web/lib/budgets.mjs`, `web/lib/panels.mjs`) and added a standing worked
+  example under the chart naming a real model, what the cost chart sends you to
+  instead, and what the speed chart does. Deadlines are derived from field
+  quantiles rather than hard-coded, so they follow the latency control. Drag
+  interaction removed with the cube. 21 tests pass.
+- 2026-07-31: [FIXED] Four defects from browser verification: a clipped x-axis
+  name block in the panels, reveal labels struck through by the frontier
+  staircase, awkward singular grammar in the worked example, and a pre-existing
+  bug where the canvas never repainted on an OS colour-scheme change, leaving
+  the light palette painted on the dark page.
+- 2026-07-31: [FIXED] A deploy could go live and stay invisible. Assets were
+  served with `max-age=3600` and no content hashing, so a deploy shipped fresh
+  HTML pointing at asset URLs Cloudflare was still caching — caught only
+  because the worked example rendered completely unstyled on the public site
+  while being correct locally. `src/build-site.mjs` now stamps every asset
+  reference with a hash of the build and refuses to emit an unstamped one, and
+  `src/static-server.mjs` grants a long `max-age` only to stamped URLs. The
+  guard uses deliberately broader detection than the stamper, so it catches a
+  reference shape the stamper would miss rather than agreeing with itself.
+- 2026-07-31: [DONE] Docs brought back in line with the build: `method.md` lost
+  the camera-angles-as-destination section and gained the deadline
+  decomposition with both directions of the argument, and `AGENTS.md` records
+  the cache-stamping requirement.

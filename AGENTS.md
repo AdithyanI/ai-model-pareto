@@ -16,7 +16,9 @@ whether the three dimensions can be understood together.
    that affects a number on the page.
 3. `web/lib/pareto.mjs` — the dominance core. Shared by the Node build and the
    browser, so `test/pareto.test.mjs` covers both.
-4. `src/build-snapshot.mjs` — turns the live source into `web/data/snapshot.json`.
+4. `web/lib/budgets.mjs` — the split view's decomposition, and the proof sketch
+   for why it reproduces the three-way frontier exactly.
+5. `src/build-snapshot.mjs` — turns the live source into `web/data/snapshot.json`.
 
 ## Commands
 
@@ -52,11 +54,14 @@ never needed and there is no lockfile to keep current.
 
 ## Design
 
-Uses Adi's shared design language: off-white (never warm cream), sage accent,
-Newsreader for reading and Inter for UI, flat hairline surfaces. `web/tokens.css`
-is a vendored copy of the canon in `~/GitHub/adi-design`; product-specific
-values (the amber highlight reserved for the 3D-only winners) live at the top of
-`web/styles.css`. Refresh `tokens.css` from the canon rather than editing it.
+Uses Adi's shared design language for the page chrome: off-white (never warm
+cream), Newsreader for reading and Inter for UI, flat hairline surfaces.
+`web/tokens.css` is a vendored copy of the canon in `~/GitHub/adi-design`;
+refresh it from there rather than editing it. The **chart** palette is
+deliberately product-local and lives at the top of `web/styles.css` — a scatter
+has to separate roles across a hundred overlapping marks, which needs more
+chroma and a wider lightness gap than calm UI accents give. See the Colour
+section of `docs/references/method.md` before changing it.
 
 ## Deployment
 
@@ -86,3 +91,10 @@ Public site, so no Cloudflare Access policy. Logs land in
 The data snapshot is committed, so a restart never depends on Artificial
 Analysis being reachable. Refresh it deliberately with
 `./scripts/deploy-local.sh --apply --refresh-data`.
+
+`src/build-site.mjs` stamps every asset reference with a `?v=` hash of the
+build, and `src/static-server.mjs` gives a long `max-age` only to stamped URLs.
+Without this a deploy ships fresh HTML pointing at asset URLs the edge is still
+caching, so the site goes live and stays invisible for hours — it happened
+once. The build refuses to emit an unstamped reference, so do not add an asset
+link in a shape the stamper does not recognise without extending it.

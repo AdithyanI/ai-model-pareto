@@ -233,3 +233,54 @@ test("the drawn boundary uses exactly the computed 2D front", () => {
     "a dominated model must not appear as a corner of the frontier",
   );
 });
+
+// --------------------------------------------------------------- budget split
+
+test("the union of within-budget frontiers is exactly the three-way frontier", () => {
+  // The split view's entire claim. It is a theorem, not a coincidence:
+  //   - a leader of budget T is three-way optimal, because anything beating it
+  //     outright would be no slower, hence inside T, beating it there too;
+  //   - a three-way optimal model leads the budget at its own response time,
+  //     by the same argument run backwards.
+  // Asserted on a field with deliberate ties and a hidden winner.
+  const rows = [
+    row("fast-weak", 30, 0.1, 1),
+    row("fast-mid", 45, 0.5, 2),
+    row("slow-cheap-smart", 70, 0.2, 40),
+    row("mid-hidden", 55, 0.3, 5),
+    row("smart-dear-quick", 72, 9, 3),
+    row("beaten", 40, 2, 30),
+  ];
+
+  const threeWay = new Set(paretoFront(rows, THREE).map((r) => r.id));
+  const union = new Set();
+  for (const limit of rows.map((r) => r.time)) {
+    const within = rows.filter((r) => r.time <= limit);
+    for (const r of paretoFront(within, [intelligence, cost])) union.add(r.id);
+  }
+
+  assert.deepEqual(
+    [...union].sort(),
+    [...threeWay].sort(),
+    "budget panels must reproduce the three-way frontier exactly, with nothing extra",
+  );
+  assert.ok(threeWay.has("beaten") === false, "the field must actually exclude something");
+});
+
+test("budget panels only ever promote models the three-way test already accepts", () => {
+  // The direction that matters for honesty: the split view must never present
+  // a model as a winner that the headline count does not contain.
+  const rows = [];
+  let seed = 7;
+  const rand = () => ((seed = (seed * 1103515245 + 12345) % 2147483648) / 2147483648);
+  for (let i = 0; i < 120; i++) {
+    rows.push(row(`r${i}`, Math.round(rand() * 600) / 10, Math.round(rand() * 5000) / 1000 + 0.001, Math.round(rand() * 600) / 10 + 0.1));
+  }
+  const threeWay = new Set(paretoFront(rows, THREE).map((r) => r.id));
+  for (const limit of rows.map((r) => r.time)) {
+    const within = rows.filter((r) => r.time <= limit);
+    for (const r of paretoFront(within, [intelligence, cost])) {
+      assert.ok(threeWay.has(r.id), `${r.id} leads a budget panel but is not three-way optimal`);
+    }
+  }
+});

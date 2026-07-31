@@ -1,4 +1,6 @@
 import { Scene } from "./lib/scene.mjs";
+import { Panels } from "./lib/panels.mjs";
+import { budgetPanels } from "./lib/budgets.mjs";
 import { AXES, formatCost, formatSeconds, formatRatio } from "./lib/axes.mjs";
 import { VIEWS, VIEW_ORDER, makeScale, shortestAngle, easeInOutCubic } from "./lib/projection.mjs";
 import { paretoFront, dominates, OBJECTIVES } from "./lib/pareto.mjs";
@@ -6,6 +8,7 @@ import { paretoFront, dominates, OBJECTIVES } from "./lib/pareto.mjs";
 const $ = (sel) => document.querySelector(sel);
 const canvas = $("#plot");
 const scene = new Scene(canvas);
+const panels = new Panels(canvas);
 
 const state = {
   data: null,
@@ -17,6 +20,8 @@ const state = {
   rows: [],
 };
 
+const isPanelView = (id = state.view) => VIEWS[id].kind === "panels";
+
 const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
 async function boot() {
@@ -27,12 +32,31 @@ async function boot() {
   renderLegend();
   wireInteraction();
   renderMeta();
-  scene.resize();
+  resize();
   draw();
   window.addEventListener("resize", () => {
-    scene.resize();
+    resize();
     draw();
   });
+  // Both renderers read their colours from CSS custom properties at paint
+  // time, so a theme change leaves the canvas holding the old palette until
+  // something else happens to trigger a repaint.
+  window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", draw);
+}
+
+/**
+ * Measure, then let the stacked layout claim the height it needs, then measure
+ * again. Changing the height cannot change the width, so `compact` is settled
+ * on the first pass and this converges immediately.
+ */
+function resize() {
+  const wrap = $(".canvas-wrap");
+  scene.resize();
+  panels.resize();
+  wrap.classList.toggle("is-panels", isPanelView());
+  wrap.classList.toggle("is-stacked", panels.compact);
+  scene.resize();
+  panels.resize();
 }
 
 /** Rows currently in scope, with the active latency resolved onto `time`. */
@@ -96,27 +120,41 @@ function rebuild() {
   });
 
   scene.setPoints(points);
+  panels.setPoints(points);
   state.points = points;
+  // The panels are the same finding, decomposed: the union of their frontiers
+  // is the three-way frontier exactly. See lib/budgets.mjs.
+  state.panels = budgetPanels(rows, state.fronts);
+  const revealed = new Set();
+  for (const panel of state.panels) for (const id of panel.revealed) revealed.add(id);
+
   state.counts = {
     plotted: points.length,
     hidden: points.filter((p) => p.state === "hidden").length,
     front3d: points.filter((p) => p.onFront.three).length,
     frontIntCost: fic.size,
     frontIntTime: fit.size,
+    revealedHere: revealed.size,
   };
 
   // Keep any selection alive across a rebuild.
   if (state.selected) {
     state.selected = points.find((p) => p.id === state.selected.id) ?? null;
     scene.selected = state.selected;
+    panels.selected = state.selected;
   }
 
   renderFinding();
   renderDetail();
+  renderWorkedExample();
   $("#view-caption").textContent = viewCaption(VIEWS[state.view]);
 }
 
 function draw() {
+  if (isPanelView()) {
+    panels.render({ panels: state.panels, scales: state.scales });
+    return;
+  }
   scene.render({
     view: state.view,
     scales: state.scales,
@@ -124,9 +162,15 @@ function draw() {
   });
 }
 
-/** Animate the camera to a view. Every view change is a camera move. */
+/**
+ * Move to a view. Between the two published charts that is a rotation of the
+ * same points, because they really are one scene at two camera angles and
+ * seeing the dots travel is the cheapest way to say so. The split view is a
+ * different kind of picture, so it simply appears.
+ */
 function goToView(id) {
   const target = VIEWS[id];
+  const wasPanels = isPanelView();
   state.view = id;
   document.querySelectorAll("[data-view]").forEach((b) => {
     b.setAttribute("aria-pressed", String(b.dataset.view === id));
@@ -134,6 +178,15 @@ function goToView(id) {
   $("#view-caption").textContent = viewCaption(target);
   renderLegend();
   canvas.setAttribute("aria-label", altText());
+  if (state.animation) cancelAnimationFrame(state.animation);
+
+  if (isPanelView() || wasPanels) {
+    // Canvas box changes shape between the two modes, so re-measure first.
+    resize();
+    if (!isPanelView()) scene.camera = { azimuth: target.azimuth, elevation: target.elevation };
+    draw();
+    return;
+  }
 
   const from = { ...scene.camera };
   const to = {
@@ -141,7 +194,6 @@ function goToView(id) {
     elevation: target.elevation,
   };
 
-  if (state.animation) cancelAnimationFrame(state.animation);
   if (reduceMotion) {
     scene.camera = { azimuth: target.azimuth, elevation: target.elevation };
     draw();
@@ -168,9 +220,9 @@ function buildControls() {
   views.innerHTML = "";
   for (const id of VIEW_ORDER) {
     const b = document.createElement("button");
-    b.className = id === "three" ? "chip chip-reveal" : "chip";
+    b.className = VIEWS[id].kind === "panels" ? "chip chip-reveal" : "chip";
     b.dataset.view = id;
-    b.textContent = id === "three" ? `${VIEWS[id].label} \u27f3` : VIEWS[id].label;
+    b.textContent = VIEWS[id].label;
     b.setAttribute("aria-pressed", String(id === state.view));
     b.addEventListener("click", () => goToView(id));
     views.append(b);
@@ -208,8 +260,14 @@ function buildControls() {
  */
 function viewCaption(view) {
   const c = state.counts;
-  if (!view.axes.horizontal) {
-    return `${c.front3d} models survive all three axes \u2014 and ${c.hidden} of them appear on neither flat chart.`;
+  if (view.kind === "panels") {
+    const list = state.panels ?? [];
+    const first = list[0];
+    const last = list[list.length - 1];
+    // With too small a field to cut, there is only the unlimited panel and no
+    // contrast to describe.
+    if (list.length < 2) return view.caption;
+    return `${first.leaders.size} models are worth buying under ${first.label.replace("Under ", "")}, ${last.leaders.size} with no deadline at all \u2014 and they are not the same models.`;
   }
   const n = view.id === "intelligenceCost" ? c.frontIntCost : c.frontIntTime;
   return `${n} models win this chart. ${view.caption}`;
@@ -218,12 +276,18 @@ function viewCaption(view) {
 function select(point) {
   state.selected = point;
   scene.selected = point;
+  panels.selected = point;
   renderDetail();
+}
+
+function setHovered(point) {
+  scene.hovered = point;
+  panels.hovered = point;
 }
 
 function wireInteraction() {
   const tooltip = $("#tooltip");
-  let dragging = null;
+  const active = () => (isPanelView() ? panels : scene);
 
   const pointerPos = (e) => {
     const rect = canvas.getBoundingClientRect();
@@ -232,22 +296,9 @@ function wireInteraction() {
 
   canvas.addEventListener("pointermove", (e) => {
     const { x, y } = pointerPos(e);
-
-    if (dragging) {
-      // Free rotation puts the reader in control of the object.
-      const dx = e.clientX - dragging.x;
-      const dy = e.clientY - dragging.y;
-      scene.camera.azimuth = dragging.azimuth - dx * 0.008;
-      scene.camera.elevation = clamp(dragging.elevation + dy * 0.008, -Math.PI / 2, Math.PI / 2);
-      dragging.moved = dragging.moved || Math.hypot(dx, dy) > 3;
-      if (dragging.moved) markFreeCamera();
-      draw();
-      return;
-    }
-
-    const hit = scene.hitTest(x, y);
-    if (hit !== scene.hovered) {
-      scene.hovered = hit;
+    const hit = active().hitTest(x, y);
+    if (hit !== active().hovered) {
+      setHovered(hit);
       draw();
     }
     if (hit) {
@@ -262,46 +313,20 @@ function wireInteraction() {
       canvas.style.cursor = "pointer";
     } else {
       tooltip.hidden = true;
-      canvas.style.cursor = "grab";
+      canvas.style.cursor = "default";
     }
   });
 
   canvas.addEventListener("pointerdown", (e) => {
     const { x, y } = pointerPos(e);
-    const hit = scene.hitTest(x, y);
-    if (hit) {
-      select(hit);
-      draw();
-      return;
-    }
-    dragging = {
-      x: e.clientX,
-      y: e.clientY,
-      azimuth: scene.camera.azimuth,
-      elevation: scene.camera.elevation,
-      moved: false,
-    };
-    canvas.setPointerCapture(e.pointerId);
-    canvas.style.cursor = "grabbing";
+    select(active().hitTest(x, y));
+    draw();
   });
 
-  const endDrag = (e) => {
-    if (dragging && !dragging.moved) {
-      select(null);
-      draw();
-    }
-    dragging = null;
-    canvas.style.cursor = "grab";
-    if (e?.pointerId !== undefined && canvas.hasPointerCapture?.(e.pointerId)) {
-      canvas.releasePointerCapture(e.pointerId);
-    }
-  };
-  canvas.addEventListener("pointerup", endDrag);
-  canvas.addEventListener("pointercancel", endDrag);
   canvas.addEventListener("pointerleave", () => {
     tooltip.hidden = true;
-    if (scene.hovered) {
-      scene.hovered = null;
+    if (active().hovered) {
+      setHovered(null);
       draw();
     }
   });
@@ -309,8 +334,9 @@ function wireInteraction() {
   document.addEventListener("keydown", (e) => {
     if (e.target instanceof HTMLSelectElement) return;
     const idx = VIEW_ORDER.indexOf(state.view);
-    if (e.key === "ArrowRight") goToView(VIEW_ORDER[(idx + 1) % VIEW_ORDER.length]);
-    if (e.key === "ArrowLeft") goToView(VIEW_ORDER[(idx + 3) % VIEW_ORDER.length]);
+    const n = VIEW_ORDER.length;
+    if (e.key === "ArrowRight") goToView(VIEW_ORDER[(idx + 1) % n]);
+    if (e.key === "ArrowLeft") goToView(VIEW_ORDER[(idx + n - 1) % n]);
     if (e.key === "Escape") {
       select(null);
       draw();
@@ -326,11 +352,6 @@ function wireInteraction() {
       draw();
     }
   });
-}
-
-function markFreeCamera() {
-  document.querySelectorAll("[data-view]").forEach((b) => b.setAttribute("aria-pressed", "false"));
-  $("#view-caption").textContent = "Free camera. Pick a view to snap back to a familiar angle.";
 }
 
 // ------------------------------------------------------------------ rendering
@@ -351,7 +372,18 @@ function tooltipHtml(p) {
       <div><dt>Intelligence</dt><dd>${r.intelligence.toFixed(1)}</dd></div>
       <div><dt>Cost</dt><dd>${formatCost(r.cost)}</dd></div>
       <div><dt>Time</dt><dd>${formatSeconds(r.time)}</dd></div>
-    </dl>`;
+    </dl>
+    ${isPanelView() ? budgetLine(p) : ""}`;
+}
+
+/** In the split view the useful extra fact is which deadlines it wins under. */
+function budgetLine(p) {
+  const wins = state.panels.filter((panel) => panel.leaders.has(p.id));
+  if (wins.length === 0) return `<p class="tooltip-note">Beaten under every deadline shown.</p>`;
+  // Echo the panel headings verbatim so the reader can find them on the chart.
+  return `<p class="tooltip-note">Best value in: ${escapeHtml(
+    wins.map((w) => w.label).join(" \u00b7 "),
+  )}</p>`;
 }
 
 /** Where a value sits in the field, 0 worst to 1 best, on the plotted scale. */
@@ -443,7 +475,7 @@ function verdictHtml(p, rivals) {
         <p class="verdict-note">${
           shows.length
             ? `Visible on the ${escapeHtml(shows.join(" and "))} chart${shows.length > 1 ? "s" : ""}.`
-            : "Only the three-way view finds it."
+            : "Only the split view finds it."
         }</p>
       </div>`;
   }
@@ -537,6 +569,128 @@ function renderFinding() {
   canvas.setAttribute("aria-label", altText());
 }
 
+// ------------------------------------------------------------ worked example
+
+/**
+ * Every rival that beats a hidden winner on a published chart is worse on the
+ * axis that chart does not draw — and that is guaranteed, not observed. If any
+ * of them were also no worse on the third axis it would beat the model
+ * outright, and the model would not have survived the three-way test.
+ *
+ * So the honest figure to quote is the *smallest* penalty across all of them:
+ * even the most favourable alternative that chart offers costs you this much.
+ */
+function rivalSummary(row, objectives, thirdKey) {
+  const rivals = state.rows.filter((o) => o.id !== row.id && dominates(o, row, objectives));
+  if (rivals.length === 0) return null;
+  return {
+    // The one a reader would actually be steered to: the strongest of them.
+    pick: rivals.reduce((a, b) => (b.intelligence > a.intelligence ? b : a)),
+    count: rivals.length,
+    least: Math.min(...rivals.map((o) => o[thirdKey] / row[thirdKey])),
+  };
+}
+
+/** The clearest case to walk through: both penalties large, so neither is a rounding error. */
+function pickWorkedExample() {
+  const { intelligence, cost, time } = OBJECTIVES;
+  let best = null;
+  for (const p of state.points) {
+    if (p.state !== "hidden") continue;
+    const onCost = rivalSummary(p.row, [intelligence, cost], "time");
+    const onTime = rivalSummary(p.row, [intelligence, time], "cost");
+    if (!onCost || !onTime) continue;
+    const score = Math.min(onCost.least, onTime.least);
+    if (!best || score > best.score || (score === best.score && p.row.intelligence > best.p.row.intelligence)) {
+      best = { p, onCost, onTime, score };
+    }
+  }
+  return best;
+}
+
+function renderWorkedExample() {
+  const el = $("#worked");
+  const ex = pickWorkedExample();
+  if (!ex) {
+    el.hidden = true;
+    return;
+  }
+  el.hidden = false;
+  const r = ex.p.row;
+
+  const card = (role, row, worseKey, note) => `
+    <article class="worked-card${worseKey ? "" : " is-subject"}">
+      <p class="worked-role">${role}</p>
+      <h3>${escapeHtml(row.shortName)}</h3>
+      <dl class="worked-stats">
+        ${statRow("intelligence", row, worseKey)}
+        ${statRow("cost", row, worseKey)}
+        ${statRow("time", row, worseKey)}
+      </dl>
+      <p class="worked-note">${note}</p>
+    </article>`;
+
+  const penalty = (summary, key) => {
+    const noun = key === "time" ? "slower" : "dearer";
+    const ratio = formatRatio(summary.least);
+    if (summary.count === 1) {
+      return ratio
+        ? `the only model that beats it there is <b>${escapeHtml(ratio)} ${noun}</b>`
+        : `the only model that beats it there is ${noun}`;
+    }
+    return ratio
+      ? `every one of the <b>${summary.count}</b> that beat it there is ${noun} &mdash; even the
+         mildest by <b>${escapeHtml(ratio)}</b>`
+      : `every one of the <b>${summary.count}</b> that beat it there is ${noun}`;
+  };
+
+  el.innerHTML = `
+    <h2>One model, worked through</h2>
+    <p class="worked-lead">
+      <strong>${escapeHtml(r.shortName)}</strong> looks beaten on both published charts. It is not
+      beaten by anything.
+    </p>
+    <div class="worked-grid">
+      ${card(
+        "The model",
+        r,
+        null,
+        `Nothing in the field is at least as good on intelligence, price and speed together \u2014
+         and yet neither published chart puts it on its frontier.`,
+      )}
+      ${card(
+        "Smart vs cheap sends you to",
+        ex.onCost.pick,
+        "time",
+        `Smarter and no dearer &mdash; but that chart never drew the clock, and
+         ${penalty(ex.onCost, "time")}.`,
+      )}
+      ${card(
+        "Smart vs fast sends you to",
+        ex.onTime.pick,
+        "cost",
+        `Smarter and no slower &mdash; but that chart never drew the price, and
+         ${penalty(ex.onTime, "cost")}.`,
+      )}
+    </div>
+    <p class="worked-close">
+      Two different rivals, each winning by ignoring a different axis. Put all three on the table
+      and nothing in this field beats ${escapeHtml(r.shortName)} &mdash; which is why it shows up
+      the moment you name a deadline, and never on a chart that assumes you have none.
+    </p>`;
+}
+
+/** One line of the comparison, with the axis that chart ignored called out. */
+function statRow(key, row, worseKey) {
+  const meta = AXES[key];
+  const worse = key === worseKey;
+  return `
+    <div${worse ? ' class="is-worse"' : ""}>
+      <dt>${escapeHtml(meta.short)}</dt>
+      <dd>${escapeHtml(meta.format(row[key]))}</dd>
+    </div>`;
+}
+
 /**
  * A mark means something different in each view, so the legend is rebuilt with
  * the camera. On a flat chart a diamond is a winner of that chart; in the
@@ -545,11 +699,11 @@ function renderFinding() {
 function renderLegend() {
   const view = VIEWS[state.view];
   const c = state.counts;
-  if (!view.axes.horizontal) {
+  if (view.kind === "panels") {
     $("#legend").innerHTML = `
-      <span class="key"><i class="swatch swatch-front"></i>Best on all three \u2014 a flat chart already showed it</span>
-      <span class="key"><i class="swatch swatch-hidden"></i>Best on all three \u2014 <b>on neither flat chart</b> (${c.hidden})</span>
-      <span class="key"><i class="swatch swatch-dom"></i>Beaten</span>`;
+      <span class="key"><i class="swatch swatch-front"></i>Best value inside this deadline</span>
+      <span class="key"><i class="swatch swatch-hidden"></i>Best value here, <b>on neither published chart</b> (${c.revealedHere})</span>
+      <span class="key"><i class="swatch swatch-dom"></i>Something in the same panel beats it</span>`;
     return;
   }
   // Naming the two axes teaches the test the chart is applying, which a bare
@@ -564,6 +718,16 @@ function renderLegend() {
 function altText() {
   const c = state.counts;
   const v = VIEWS[state.view];
+  if (v.kind === "panels") {
+    const parts = (state.panels ?? [])
+      .map((p) => `${p.label.toLowerCase()}: ${p.count} models qualify and ${p.leaders.size} lead`)
+      .join("; ");
+    return (
+      `The same intelligence-versus-cost chart drawn three times under three response-time ` +
+      `deadlines \u2014 ${parts}. The set of leaders changes with the deadline, and ` +
+      `${c.revealedHere} of the leaders shown appear on neither published two-axis chart.`
+    );
+  }
   return (
     `${v.label}. Scatter plot of ${c.plotted} AI model configurations by intelligence, cost per ` +
     `task and response time. A frontier line marks the best available at each price; ${c.front3d} ` +
@@ -581,7 +745,6 @@ function renderMeta() {
     intelligence, cost and latency. Values are live and change; this page shows a snapshot.`;
 }
 
-const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
 
 function escapeHtml(s) {
   return String(s).replace(

@@ -170,33 +170,85 @@ product-local rather than inherited from the shared design tokens, because it
 has to carry meaning rather than identity.
 
 Two roles need to be told apart: on the frontier, `oklch(0.42 0.11 165)`, and
-the 3D-only winners, `oklch(0.55 0.19 42)`. They sit about 13 lightness points
-and roughly 130° of hue apart, so the pair separates on lightness alone and
-survives red-green colour blindness. Shape repeats the distinction a second
-time — every marked model is a diamond, everything beaten is a small dot — so
-no claim on the page depends on colour being perceived at all.
+the winners no published chart can show, `oklch(0.55 0.19 42)`. They sit about
+13 lightness points and roughly 130° of hue apart, so the pair separates on
+lightness alone and survives red-green colour blindness. Shape repeats the
+distinction a second time — every marked model is a diamond, everything beaten
+is a small dot — so no claim on the page depends on colour being perceived at
+all. The dark theme keeps the same lightness gap rather than lifting both roles
+toward white, which is the easy mistake.
 
-Each flat view marks only its own frontier. Marking the 3D winners on a flat
-chart was tried and removed: it places emphasis inside the region that same
+Both renderers read these values from CSS custom properties at paint time, so
+the page listens for `prefers-color-scheme` changes and repaints; without that
+the canvas keeps the old palette while the rest of the page switches.
+
+Each flat view marks only its own frontier. Marking the three-way winners on a
+flat chart was tried and removed: it places emphasis inside the region that same
 chart shades as beaten, which reads as a contradiction rather than a finding.
-The reveal belongs in the rotated view, where it is true.
+The reveal belongs in the split view, where it is true.
 
-## Why the views are camera angles
+## The split view, and why it is exact
 
-The scene is a unit cube with cost, intelligence and time on its axes, drawn
-with an **orthographic** projection. Orthographic, not perspective, is what
-makes the claim literal: at azimuth 0 and elevation 0 the render is exactly a
-2D scatter plot of cost against intelligence, with no foreshortening. Rotating
-90° in azimuth gives intelligence-vs-time; 90° in elevation gives cost-vs-time.
+The two published charts are the same scene at two camera angles: the scene is
+a unit cube with cost, intelligence and time on its axes, drawn with an
+**orthographic** projection. Orthographic, not perspective, is what makes that
+claim literal — at azimuth 0 and elevation 0 the render is exactly a 2D scatter
+of cost against intelligence, with no foreshortening, and rotating 90° in
+azimuth gives intelligence-vs-time. Moving between the two published charts is
+therefore a rotation of the same points rather than a cut to a new picture.
 
-So the published charts are not redrawn as separate visualisations. They are
-the same object viewed down each axis in turn, and switching view is a camera
-move rather than a mode change. Perspective projection would break this, and a
-3D-only presentation would lose the recognisable starting point.
+A freely rotatable 3D view was built on this and then **removed**. It was
+honest and nearly unusable: under orthographic projection a reader cannot tell
+which of two dots is nearer, which is precisely the judgement the third axis
+demands. Colour-ramp and 2.5D alternatives were mocked up from real data and
+rejected for the same reason — quantity read from colour or depth is the least
+accurately judged visual channel available.
 
-Depth in the rotated view is ambiguous under orthographic projection, so
-non-dominated points get a drop line to the floor. Dominated points do not, to
-keep the view legible.
+What replaced it is a **split**: the smart-vs-cheap chart drawn three times,
+each panel holding only the models that meet a stated response-time deadline,
+with the frontier recomputed inside each. The last panel has no deadline, and
+is therefore the published chart exactly.
+
+This is not a simplification of the three-way result. It **is** the three-way
+result:
+
+```
+union over all budgets T of  paretoFront({r : r.time <= T}, [intelligence, cost])
+  ===  paretoFront(all, [intelligence, cost, time])
+```
+
+Both directions follow from one argument. A leader of the budget-T panel must
+be three-way optimal, because anything beating it outright would be no slower,
+hence already inside panel T and beating it there. Conversely a three-way
+optimal model leads the panel at T equal to its own response time, by the same
+argument run backwards. Nothing is interpolated and nothing is left over.
+
+On the 2026-07-31 capture this was checked against the live snapshot: 34 in the
+union, 34 on the three-way front, zero in one and not the other. Two tests in
+`test/pareto.test.mjs` assert both directions, one on a hand-built field and one
+on a pseudo-random field of 120 configurations.
+
+### Choosing the deadlines
+
+A deadline is a decision the reader brings, not a measurement, which is what
+separates it from an invented bin. Panel headings are therefore phrased as the
+question ("Under 8s"), not as a bucket ("8–15s"), and the panels are nested
+rather than disjoint — a model fast enough for the tightest deadline appears in
+all three, which is exactly what being fast means.
+
+The cuts themselves are derived from the field on screen, at roughly the 20th
+and 50th percentiles of response time, then rounded to a value a person would
+say out loud. They are not fixed constants: the site offers three different
+latency definitions, and a constant good for end-to-end response would land in
+an empty part of the range for time-to-first-token. `budgetCuts` in
+`web/lib/budgets.mjs` also refuses a cut that would leave a panel with fewer
+than eight models, since a panel too sparse to read as a chart teaches nothing.
+
+Because the decomposition holds for *every* budget, the choice of which two to
+show is a presentation decision with no bearing on what is true. Showing more
+panels would surface more of the hidden-optimal set; showing these two surfaces
+five of the eleven, and the count of models revealed by the panels actually on
+screen is stated in the legend rather than implied to be the whole finding.
 
 ## Reproducing
 

@@ -19,15 +19,19 @@ const TYPES = {
 /**
  * Minimal static server for a built directory.
  *
- * `immutable` is off in dev so edits show up on reload, and on in production
- * where the tunnel fronts a build whose content is fixed until the next deploy.
- * HTML is always revalidated so a deploy is picked up immediately.
+ * Caching is keyed on the `?v=` stamp the build writes into every asset
+ * reference (see `src/build-site.mjs`). A stamped URL names one exact build,
+ * so it can be cached hard and forever; an unstamped one might mean anything,
+ * so it revalidates. HTML is never cached, because it is what carries the new
+ * stamps. `immutable` is off in dev, where nothing is stamped and every edit
+ * has to show up on reload.
  */
 export function createStaticServer({ root, immutable = false }) {
   const rootDir = path.resolve(root);
 
   return http.createServer((req, res) => {
-    const url = decodeURIComponent((req.url ?? "/").split("?")[0]);
+    const [rawPath, query = ""] = (req.url ?? "/").split("?");
+    const url = decodeURIComponent(rawPath);
 
     if (url === "/health") {
       const ok = fs.existsSync(path.join(rootDir, "index.html"));
@@ -72,7 +76,9 @@ export function createStaticServer({ root, immutable = false }) {
     }
 
     const isHtml = ext === ".html";
-    const cache = !immutable || isHtml ? "no-cache" : "public, max-age=3600, must-revalidate";
+    const versioned = /(^|&)v=[0-9a-f]{6,}(&|$)/.test(query);
+    const cache =
+      !immutable || isHtml || !versioned ? "no-cache" : "public, max-age=31536000, immutable";
 
     res.writeHead(200, {
       "content-type": TYPES[ext] ?? "application/octet-stream",

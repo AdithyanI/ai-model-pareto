@@ -3,9 +3,9 @@
  *
  * Orthographic (not perspective) is a deliberate choice: it means that at
  * azimuth 0 / elevation 0 the rendered scene is *exactly* a 2D scatter plot of
- * x against y, with no foreshortening. That is what lets the published 2D
- * charts and the 3D view be the same scene at different camera angles rather
- * than separate visualisations.
+ * x against y, with no foreshortening. The two published charts are therefore
+ * literally one scene at two camera angles, and moving between them can be a
+ * rotation of the same points rather than a cut to a different picture.
  *
  * Axis convention in cube space, each normalised to [-1, 1]:
  *   x -> cost        (right is more expensive)
@@ -45,31 +45,33 @@ export const VIEWS = {
     elevation: 0,
     axes: { horizontal: "time", vertical: "intelligence", collapsed: "cost" },
   },
-  costTime: {
-    id: "costTime",
-    label: "Cheap vs fast",
-    caption: "Looking down from above. Intelligence is the hidden axis now.",
-    azimuth: 0,
-    elevation: Math.PI / 2,
-    axes: { horizontal: "cost", vertical: "time", collapsed: "intelligence" },
-  },
-  three: {
-    id: "three",
+  /**
+   * Not a camera angle: the same smart-vs-cheap chart, drawn three times under
+   * three different deadlines. Rendered by `panels.mjs` rather than the scene.
+   *
+   * This replaced a rotatable 3D cube. The cube was honest but nearly unusable
+   * — under orthographic projection a reader cannot tell which of two dots is
+   * nearer, which is exactly the judgement the third axis demands. Splitting
+   * the chart asks only for a left-to-right comparison of position, and loses
+   * nothing: the union of the panel frontiers is provably the whole three-way
+   * frontier. See `budgets.mjs`.
+   */
+  budget: {
+    id: "budget",
     label: "All three",
-    caption: "Both charts at once. The orange models win here and appear on neither flat chart.",
-    azimuth: -0.62,
-    elevation: 0.42,
-    axes: { horizontal: null, vertical: null, collapsed: null },
+    kind: "panels",
+    caption: "Name a deadline and the winners change. The published chart is the last panel.",
+    axes: { horizontal: "cost", vertical: "intelligence", collapsed: "time" },
   },
 };
 
 /**
- * The views offered in the UI. `costTime` stays defined and its front stays
- * computed, because dominance in the cost/time plane still decides whether a
- * point counts as hidden — but it is not a chart anyone publishes, so putting
- * it on screen costs a reader more than it tells them.
+ * The views offered in the UI. The cost-versus-time front stays computed,
+ * because dominance in that plane is part of deciding what counts as hidden —
+ * but it is not a chart anyone publishes, so putting it on screen would cost a
+ * reader more than it tells them.
  */
-export const VIEW_ORDER = ["intelligenceCost", "intelligenceTime", "three"];
+export const VIEW_ORDER = ["intelligenceCost", "intelligenceTime", "budget"];
 
 /**
  * How axis-aligned the camera currently is: 1 at a flat view, 0 once it has
