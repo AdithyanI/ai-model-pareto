@@ -9,22 +9,28 @@ whether the three dimensions can be understood together.
 
 ## Start here
 
-1. `docs/references/method.md` — the analytical contract: source, identity
+1. `docs/projects/ai-model-pareto-frontier-2026/tasks.md` — the project tracker:
+   why this exists, what is decided, what is left. **Resume point.**
+2. `docs/references/method.md` — the analytical contract: source, identity
    policy, latency definitions, dominance rules. Read before changing anything
    that affects a number on the page.
-2. `web/lib/pareto.mjs` — the dominance core. Shared by the Node build and the
+3. `web/lib/pareto.mjs` — the dominance core. Shared by the Node build and the
    browser, so `test/pareto.test.mjs` covers both.
-3. `src/build-snapshot.mjs` — turns the live source into `web/data/snapshot.json`.
+4. `src/build-snapshot.mjs` — turns the live source into `web/data/snapshot.json`.
 
 ## Commands
 
 ```bash
 npm test          # dominance unit tests
 npm run snapshot  # refetch live data -> web/data/snapshot.json
-npm run dev       # serve web/ on :4178
-npm run build     # copy web/ -> dist/ for Cloudflare Pages
+npm run dev       # serve web/ on :4178 (no build step, edits are live)
+npm run build     # copy web/ -> dist/
 bash scripts/check-fast.sh
+./scripts/deploy-local.sh --apply [--refresh-data]
 ```
+
+No dependencies. Plain Node and plain browser modules, so `npm install` is
+never needed and there is no lockfile to keep current.
 
 ## Non-negotiables
 
@@ -54,7 +60,29 @@ values (the amber highlight reserved for the 3D-only winners) live at the top of
 
 ## Deployment
 
-GitHub `main` -> Cloudflare Pages -> `pareto.adithyan.io`.
-Build command `npm run build`, output `dist/`.
-The data snapshot is committed, so a deploy never depends on the source being
-reachable at build time.
+Self-hosted on the Mac mini behind the shared Cloudflare tunnel, the same way
+the blog and the design showroom are served. There is no Cloudflare Pages
+project and no external build.
+
+```text
+dist/ -> node scripts/serve-static.mjs -> 127.0.0.1:8799 -> shared tunnel -> pareto.adithyan.io
+```
+
+| Surface | Owner |
+| --- | --- |
+| Static build and local server | this repo, `src/build-site.mjs`, `scripts/serve-static.mjs` |
+| LaunchAgent `com.<user>.ai-model-pareto` | this repo, `scripts/install-launchd-ai-model-pareto.sh` |
+| Deploy and smoke | this repo, `scripts/deploy-local.sh` |
+| Tunnel ingress, DNS, inventory | `~/GitHub/scripts`, see `docs/references/mac-mini-cloudflare-tunnel.md` |
+
+Public site, so no Cloudflare Access policy. Logs land in
+`~/.local/state/ai-model-pareto/log/`.
+
+```bash
+./scripts/install-launchd-ai-model-pareto.sh --status
+./scripts/install-launchd-ai-model-pareto.sh --logs 60
+```
+
+The data snapshot is committed, so a restart never depends on Artificial
+Analysis being reachable. Refresh it deliberately with
+`./scripts/deploy-local.sh --apply --refresh-data`.
