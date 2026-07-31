@@ -31,24 +31,24 @@ export function rotate(p, azimuth, elevation) {
 export const VIEWS = {
   intelligenceCost: {
     id: "intelligenceCost",
-    label: "Intelligence vs Cost",
-    caption: "The first chart in the thread. Time is hidden: it points straight at you.",
+    label: "Smart vs cheap",
+    caption: "Speed is the axis it cannot show.",
     azimuth: 0,
     elevation: 0,
     axes: { horizontal: "cost", vertical: "intelligence", collapsed: "time" },
   },
   intelligenceTime: {
     id: "intelligenceTime",
-    label: "Intelligence vs Time",
-    caption: "The second chart. Now cost is the hidden axis.",
+    label: "Smart vs fast",
+    caption: "Turn ninety degrees and a different set wins. Price is the missing axis now.",
     azimuth: Math.PI / 2,
     elevation: 0,
     axes: { horizontal: "time", vertical: "intelligence", collapsed: "cost" },
   },
   costTime: {
     id: "costTime",
-    label: "Cost vs Time",
-    caption: "Looking down from above. Intelligence is now the hidden axis.",
+    label: "Cheap vs fast",
+    caption: "Looking down from above. Intelligence is the hidden axis now.",
     azimuth: 0,
     elevation: Math.PI / 2,
     axes: { horizontal: "cost", vertical: "time", collapsed: "intelligence" },
@@ -56,14 +56,37 @@ export const VIEWS = {
   three: {
     id: "three",
     label: "All three",
-    caption: "The object the charts were flat views of. Nothing is hidden.",
+    caption: "Both charts at once. The orange models win here and appear on neither flat chart.",
     azimuth: -0.62,
     elevation: 0.42,
     axes: { horizontal: null, vertical: null, collapsed: null },
   },
 };
 
-export const VIEW_ORDER = ["intelligenceCost", "intelligenceTime", "costTime", "three"];
+/**
+ * The views offered in the UI. `costTime` stays defined and its front stays
+ * computed, because dominance in the cost/time plane still decides whether a
+ * point counts as hidden — but it is not a chart anyone publishes, so putting
+ * it on screen costs a reader more than it tells them.
+ */
+export const VIEW_ORDER = ["intelligenceCost", "intelligenceTime", "three"];
+
+/**
+ * How axis-aligned the camera currently is: 1 at a flat view, 0 once it has
+ * rotated meaningfully away. Drives the blend between "fill the frame like an
+ * ordinary chart" and "keep the cube square so rotation reads as rotation".
+ */
+export function flatness(camera) {
+  const quarter = Math.PI / 2;
+  const off = Math.hypot(angleTo(camera.azimuth, quarter), angleTo(camera.elevation, quarter));
+  const tolerance = 0.25;
+  return Math.max(0, 1 - off / tolerance);
+}
+
+function angleTo(angle, step) {
+  const m = ((angle % step) + step) % step;
+  return Math.min(m, step - m);
+}
 
 /** Shortest angular path, so a camera move never spins the long way round. */
 export function shortestAngle(from, to) {
@@ -94,17 +117,21 @@ export function makeScale(values, { log = false } = {}) {
   return scale;
 }
 
-/** Nice round tick values across a domain, in data space. */
+/**
+ * Nice round tick values across a domain, in data space. A log axis gets one
+ * tick per decade, plus a mid-decade tick when the span is short enough that
+ * decade-only ticks would read as a nearly bare axis.
+ */
 export function ticks(scale, count = 5) {
   const [lo, hi] = scale.domain;
   if (scale.log) {
+    const decades = Math.log10(hi) - Math.log10(lo);
+    const mults = decades > 3.2 ? [1] : [1, 3];
     const out = [];
-    const start = Math.floor(Math.log10(lo));
-    const end = Math.ceil(Math.log10(hi));
-    for (let e = start; e <= end; e++) {
-      for (const m of [1, 3]) {
+    for (let e = Math.floor(Math.log10(lo)); e <= Math.ceil(Math.log10(hi)); e++) {
+      for (const m of mults) {
         const v = m * Math.pow(10, e);
-        if (v >= lo * 0.95 && v <= hi * 1.05) out.push(v);
+        if (v >= lo * 0.98 && v <= hi * 1.02) out.push(v);
       }
     }
     return out.length > 2 ? out : [lo, Math.sqrt(lo * hi), hi];

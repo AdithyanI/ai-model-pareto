@@ -43,6 +43,34 @@ A configuration is plotted only when it has all of intelligence, cost and at
 least the default latency measure. Incomplete rows are dropped, never
 zero-filled.
 
+### Coverage, and what that excludes
+
+On the 2026-07-31 capture the source holds 868 endpoints and 415 are plotted.
+The gap is almost entirely one cause: **441 endpoints carry no
+`intelligenceIndexCostPerTask`**. The field is absent, not null. Those
+endpoints do publish per-token prices, but converting a per-token price into a
+cost per Intelligence Index task needs the token counts that task consumed on
+that endpoint, and the source does not publish them. Deriving it would mean
+inventing the number, so the row is dropped instead.
+
+The effect is not evenly spread: 205 models disappear altogether because no
+endpoint of theirs is priced this way. That is a real limitation and worth
+stating plainly. Two things bound it:
+
+- The excluded models top out at 45.4 on the index against a field maximum of
+  60.7, so none of them are candidates for the top of the intelligence axis.
+  A cheap fast one could still have earned a place on the frontier, and we
+  cannot rule that out.
+- Artificial Analysis's own cost chart is subject to the identical
+  restriction, because it needs the same field. So the set compared here is
+  the set its published chart draws from, which is what makes the comparison
+  fair. The claim is about what those charts can show, not about every model
+  that exists.
+
+A further 7 endpoints report a cost of zero or less and 4 have no intelligence
+score; both are dropped. Deduplication by model+host removes the remaining
+difference.
+
 ## Metrics
 
 | Axis | Field | Direction |
@@ -108,6 +136,51 @@ A structural check: the 3D front is necessarily a superset of every 2D front,
 since dominance on three axes is strictly harder to achieve than on two. This
 is asserted in `test/pareto.test.mjs`.
 
+**Hidden-optimal is tested against the two published charts only.** Formally
+`front3d && !frontIntCost && !frontIntTime`. Cost-vs-time is computed and is
+available in the snapshot, but it deliberately takes no part in this test: it
+is not a chart Artificial Analysis publishes, so leading it cannot make a model
+visible to a reader of the published charts. Including it would shrink the
+count by rescuing models nobody can see. This is easy to get wrong — an
+independent audit of these numbers made exactly that mistake before being
+corrected — so the definition is asserted in `scripts/verify-snapshot.mjs`.
+
+## Drawing the frontier
+
+The frontier is drawn as a **staircase**, never a curve or a diagonal join.
+This is not a stylistic choice. A diagonal segment between two models asserts
+that intermediate models exist, and they do not; the space between two points
+on a Pareto front is empty by construction.
+
+The staircase, by contrast, asserts only something already true: the best
+intelligence obtainable at a given budget stays flat until the next model
+becomes affordable, at which point it steps up. Every point along it is
+genuinely reachable, because raising a budget never buys less. `attainmentPath`
+in `web/lib/pareto.mjs` produces it, and a test asserts every segment it emits
+is axis-aligned.
+
+The region beyond the frontier is shaded rather than outlined. Everything
+inside is beaten by something on the line, which is the one claim a reader
+should be able to make without hovering over anything.
+
+## Colour
+
+The chart palette is defined at the top of `web/styles.css` and is deliberately
+product-local rather than inherited from the shared design tokens, because it
+has to carry meaning rather than identity.
+
+Two roles need to be told apart: on the frontier, `oklch(0.42 0.11 165)`, and
+the 3D-only winners, `oklch(0.55 0.19 42)`. They sit about 13 lightness points
+and roughly 130° of hue apart, so the pair separates on lightness alone and
+survives red-green colour blindness. Shape repeats the distinction a second
+time — every marked model is a diamond, everything beaten is a small dot — so
+no claim on the page depends on colour being perceived at all.
+
+Each flat view marks only its own frontier. Marking the 3D winners on a flat
+chart was tried and removed: it places emphasis inside the region that same
+chart shades as beaten, which reads as a contradiction rather than a finding.
+The reveal belongs in the rotated view, where it is true.
+
 ## Why the views are camera angles
 
 The scene is a unit cube with cost, intelligence and time on its axes, drawn
@@ -130,7 +203,18 @@ keep the view legible.
 ```bash
 npm run snapshot   # refetch; prints frontier sizes per latency measure
 npm test           # dominance edge cases and the superset invariant
+npm run verify     # re-derive every published number from the raw payload
 ```
+
+`npm run verify` is the audit of record. It reads `data/raw/source.json`
+directly, rebuilds the rows, recomputes all four Pareto fronts by brute force
+without importing the dominance core, and diffs against the committed
+snapshot — so a bug in `pareto.mjs` cannot validate itself. It also traces
+every stored field on all 415 rows back to its origin in the payload. It runs
+inside `scripts/check-fast.sh`, and skips cleanly when the gitignored raw
+payload is absent.
+
+Last full audit on the 2026-07-31 capture: 35 checks, 0 failures.
 
 Spot-checked against the live page on 2026-07-31: Claude Opus 5 (Adaptive
 Reasoning, Max Effort) on Amazon Bedrock — Intelligence Index 60.7, $2.34 per

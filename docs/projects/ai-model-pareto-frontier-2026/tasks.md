@@ -126,6 +126,21 @@ measured latency instead and does not approximate the missing metric.
 - Dominance is recomputed client-side against what is currently on screen. A
   point is never greyed out by a rival the reader has filtered away.
 - No connecting surface across the frontier; the gaps contain no models.
+- **Each view marks only its own winners.** Marking the 3D-optimal set on a
+  flat chart was built, shown to Adi, and removed: it places emphasis inside
+  the region that same chart shades as beaten, which reads as a contradiction.
+  The reveal now happens only in the rotated view, where it is true.
+- **The frontier is drawn as a staircase**, never a curve. A diagonal join
+  would assert intermediate models that do not exist; the staircase asserts
+  only that a bigger budget never buys less.
+- **The chart palette is product-local, not the shared design language.** Adi
+  released the design constraint for the plot specifically. Plot colour has to
+  separate three roles across a hundred overlapping marks, which needs more
+  chroma and a wider lightness gap than calm UI accents give. Page chrome still
+  follows the shared tokens.
+- **Hidden-optimal is tested against the two published charts only.** Leading
+  cost-vs-time does not rescue a model, because that chart is not published and
+  so cannot make anything visible to a reader.
 - Deliverable is both a static image for the reply and this live companion site.
 - Hosting is self-hosted on the Mac mini behind the shared Cloudflare tunnel,
   matching the blog. Cloudflare Pages was considered and rejected.
@@ -135,8 +150,11 @@ measured latency instead and does not approximate the missing metric.
   int-vs-cost chart with the hidden winners ringed, or a slightly rotated 3D
   view that shows depth is real? Leaning to the former with an obvious rotate
   affordance in the linked site.
-- Does the amber-versus-sage distinction survive colour-vision deficiency in
-  the static export? Untested.
+- ~~Does the highlight survive colour-vision deficiency?~~ Resolved for the
+  live site: the two roles sit ~13 lightness points and ~130 degrees of hue
+  apart in light mode and ~15 apart in dark, and shape (diamond versus dot)
+  repeats the distinction, so no claim depends on colour alone. Still to be
+  re-checked on the static export.
 - Should `preferenceMap` (43 frontier points collapse to ~15 reachable winners
   under a weight-simplex sweep) be surfaced in the UI, or is it a second post?
 
@@ -151,8 +169,8 @@ measured latency instead and does not approximate the missing metric.
 ## Backlog / Remaining Work
 - [ ] Static export at X feed dimensions, legible on mobile.
 - [ ] Alt text describing the finding, not just the chart type.
-- [ ] Colour-accessibility check of the highlight against the frontier colour.
-- [ ] Mobile visual pass on the live site.
+- [x] Colour-accessibility check of the highlight against the frontier colour.
+- [x] Mobile visual pass on the live site (390x844, both flat views and 3D).
 - [ ] Decide whether to surface `preferenceMap`.
 - [ ] Recheck source values immediately before final export.
 - [ ] Adi's explicit approval before posting.
@@ -163,6 +181,9 @@ measured latency instead and does not approximate the missing metric.
   the 3D-superset-of-2D invariant.
 - `bash scripts/check-fast.sh` — syntax, tests, snapshot integrity, and the
   guard that no raw source data is committed.
+- `npm run verify` — the audit of record. Re-derives every published number
+  from the raw payload by brute force without importing the dominance core, so
+  a bug in `pareto.mjs` cannot validate itself. Runs inside `check-fast.sh`.
 - `bash scripts/check-full.sh` — adds a live source probe and a build.
 - Reconcile sampled values against live AA tooltips after each data refresh.
 - Review the static export at feed size on mobile and desktop before approval.
@@ -191,3 +212,24 @@ measured latency instead and does not approximate the missing metric.
 - 2026-07-31: [DONE] Moved this tracker out of the memory workspace into the
   repo that owns the work. Milestones 1–3 closed; Milestone 4 is the remaining
   work.
+- 2026-07-31: [DONE] Redesigned the page around the chart. Chart is now the
+  hero, controls cut to three, and the argument runs as three beats: the cost
+  chart's 17 winners, the speed chart's visibly different 11, then all three
+  axes where 34 survive and 11 of those appeared on neither. Axes rebuilt to
+  mathematical convention — spine and arrowhead at the increasing end, ticks
+  outside the frame, horizontal y-title, and every axis carrying name, unit and
+  a direction cue. The cost-vs-time view was dropped from the UI at Adi's
+  request; its front is still computed because dominance needs it.
+- 2026-07-31: [DONE] Independently audited every published number. Wrote
+  `scripts/verify-snapshot.mjs`, which re-reads the raw payload, rebuilds the
+  rows, recomputes all four Pareto fronts by brute force without importing the
+  dominance core, and traces all 415 rows field-by-field back to their origin.
+  35 checks, 0 failures. Wired into `check-fast.sh`.
+- 2026-07-31: [NOTE] The audit surfaced a coverage limitation worth stating:
+  441 of 868 endpoints carry no `intelligenceIndexCostPerTask` at all, so 205
+  models never appear. They cannot be recovered without inventing the token
+  counts the field encodes. AA's own cost chart has the identical restriction,
+  which is what keeps the comparison fair. Documented in `method.md`.
+- 2026-07-31: [FIXED] Dark mode had the frontier and reveal colours only 2
+  lightness points apart, silently breaking the colour-blindness guarantee that
+  holds in light mode. Now ~15 apart.

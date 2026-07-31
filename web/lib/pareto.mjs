@@ -81,6 +81,57 @@ export function frontierBreakdown(rows, tolerance = 0) {
 }
 
 /**
+ * The frontier drawn as a boundary rather than inferred from dot colour.
+ *
+ * Points arrive as `{h, v}` in normalised [-1, 1] space, with `hBetter` and
+ * `vBetter` naming which end of each axis is the good end. The result is a
+ * staircase: horizontal to the next point's position, then a step in the
+ * improving direction.
+ *
+ * The staircase is a *step* function on purpose. It is the exact attainment
+ * boundary — "the best v you can get at this h" — and every point on it is
+ * genuinely reachable, because relaxing a budget never costs you anything. A
+ * diagonal join would instead assert models at intermediate positions that do
+ * not exist, which is the interpolation this project refuses to draw.
+ *
+ * `line` is the boundary. `region` closes it into the dominated area, so the
+ * chart can shade everything the frontier beats.
+ */
+export function attainmentPath(points, hBetter, vBetter) {
+  if (points.length === 0) return { line: [], region: [] };
+
+  // Walk from the good end of the horizontal axis toward the bad end.
+  const sorted = [...points].sort((a, b) => (a.h - b.h) * -hBetter);
+
+  // At equal h only the best v is attainable.
+  const steps = [];
+  for (const p of sorted) {
+    const last = steps[steps.length - 1];
+    if (last && Math.abs(last.h - p.h) < 1e-9) {
+      if ((p.v - last.v) * vBetter > 0) last.v = p.v;
+      continue;
+    }
+    steps.push({ h: p.h, v: p.v });
+  }
+
+  const worstH = -hBetter;
+  const worstV = -vBetter;
+  const first = steps[0];
+  const last = steps[steps.length - 1];
+
+  // Nothing exists beyond the good end, so the boundary drops to the axis.
+  const line = [{ h: first.h, v: worstV }, { h: first.h, v: first.v }];
+  for (let i = 1; i < steps.length; i++) {
+    line.push({ h: steps[i].h, v: steps[i - 1].v });
+    line.push({ h: steps[i].h, v: steps[i].v });
+  }
+  // Past the bad end, spending more buys nothing further.
+  line.push({ h: worstH, v: last.v });
+
+  return { line, region: [...line, { h: worstH, v: worstV }] };
+}
+
+/**
  * Sweep the simplex of preference weights over the three (normalised)
  * objectives and record which frontier point wins each weighting. This answers
  * "which of these could I ever rationally pick?" and collapses a large

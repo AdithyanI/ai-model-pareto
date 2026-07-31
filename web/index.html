@@ -11,22 +11,17 @@
     <link rel="icon" href="./favicon.svg" type="image/svg+xml" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link
-      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;1,6..72,400&display=swap"
-      rel="stylesheet"
-    />
     <link rel="stylesheet" href="./tokens.css" />
     <link rel="stylesheet" href="./styles.css" />
   </head>
   <body>
     <main>
       <header class="masthead">
-        <p class="eyebrow">Model selection</p>
         <h1>Two charts, one object</h1>
         <p class="standfirst">
-          Intelligence, cost and speed get published as two flat scatter plots. They are not two
-          charts. They are two camera angles on the same three-dimensional object, and once you
-          rotate it, a set of genuinely optimal models appears that neither flat view can show.
+          Intelligence, cost and speed get published as two separate scatter plots. They are two
+          camera angles on the same three-dimensional object &mdash; so rotate it, and models that
+          neither chart can show turn out to be among the best available.
         </p>
       </header>
 
@@ -37,63 +32,66 @@
         </div>
 
         <div class="canvas-wrap">
-          <canvas id="plot" role="img" aria-label="Scatter plot of AI models by intelligence, cost and response time"></canvas>
+          <canvas id="plot" role="img" aria-label="Loading chart"></canvas>
           <div id="tooltip" class="tooltip" hidden></div>
-          <p class="drag-hint">Drag to rotate freely &middot; arrow keys change view</p>
         </div>
 
-        <div id="legend" class="legend"></div>
-
-        <div class="controls">
-          <label class="control">
-            <span>Latency measure</span>
-            <select id="latency"></select>
-          </label>
-          <label class="control">
-            <span>Configurations shown</span>
-            <select id="scope">
-              <option value="representative">Best host per model</option>
-              <option value="all">Every model and host</option>
-              <option value="open">Open-weights only</option>
-            </select>
-          </label>
-          <label class="control control-check">
-            <input type="checkbox" id="toggle-hidden" checked />
-            <span>Halo the 3D-only winners</span>
-          </label>
-          <label class="control control-check">
-            <input type="checkbox" id="toggle-dim" checked />
-            <span>Fade dominated models</span>
-          </label>
+        <div class="stage-foot">
+          <div id="legend" class="legend"></div>
+          <p class="drag-hint">Drag to rotate &middot; arrow keys change view</p>
         </div>
-        <p id="latency-hint" class="hint"></p>
       </section>
 
       <section class="readout">
-        <div id="stats" class="stats"></div>
+        <div class="readout-main">
+          <div id="finding" class="finding"></div>
+          <div class="controls">
+            <label class="control">
+              <span>Speed measured as</span>
+              <select id="latency"></select>
+            </label>
+            <label class="control">
+              <span>Show</span>
+              <select id="scope">
+                <option value="representative">Best host per model</option>
+                <option value="all">Every model and host</option>
+                <option value="open">Open weights only</option>
+              </select>
+            </label>
+          </div>
+        </div>
         <div id="detail" class="detail"></div>
       </section>
 
       <section class="prose">
-        <h2>What the flat charts cannot say</h2>
+        <h2>Why a model can be best and still invisible</h2>
         <p id="front-note" class="note"></p>
         <p>
           A model is worth considering when nothing else is at least as good on every axis you care
-          about. On a flat chart that test only runs on two axes, so a model can be discarded for
-          being slow by a chart that never measured its price, and discarded for being expensive by
-          a chart that never measured its speed. Judge all three together and it survives.
+          about. On a flat chart that test only runs on two axes, so a model can be dropped for
+          being slow by a chart that never priced it, and dropped for being expensive by a chart
+          that never timed it. The two rivals that condemned it are different models, and neither
+          beats it overall. Rotate to all three axes and it survives: those are the orange diamonds.
+        </p>
+
+        <h2>How to read it</h2>
+        <p>
+          Each point is one model configuration on one host, because price and speed belong to the
+          host rather than the model. On a flat chart the green line is that chart&rsquo;s frontier &mdash;
+          the best intelligence you can get at each price, or at each response time. Everything in
+          the shaded area is beaten by something on that line, so only the diamonds are marked.
         </p>
         <p>
-          That is the amber set above. Those configurations are not compromises. They are the
-          options you can only see by rotating the object, and they are exactly the ones a
-          two-chart reading throws away.
+          Cost and time use logarithmic axes; the field spans orders of magnitude and a linear axis
+          would crush everything cheap into the margin. Nothing is interpolated. The frontier is
+          drawn as a staircase rather than a curve because the space between two models contains no
+          models &mdash; only the guarantee that a bigger budget never buys you less.
         </p>
-        <h2>How to read it honestly</h2>
         <p>
-          Points are model configurations on a specific host, because price and latency belong to
-          the host rather than the model. Cost and time use logarithmic axes; the field spans orders
-          of magnitude and a linear axis would crush everything cheap into the margin. Nothing is
-          interpolated: the space between points contains no models, only empty space.
+          Dominance is recomputed against whatever is currently on screen, so a point is never
+          greyed out by a rival you have filtered away. The full method, including how the data is
+          read and why this latency measure, is in the
+          <a href="https://github.com/AdithyanI/ai-model-pareto/blob/main/docs/references/method.md" rel="noopener">method note</a>.
         </p>
         <p id="meta" class="meta"></p>
       </section>

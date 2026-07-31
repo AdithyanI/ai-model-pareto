@@ -31,6 +31,9 @@ for (const r of s.rows) {
 console.log("    " + s.rows.length + " rows, captured " + s.capturedAt);
 ' || fail=1
 
+echo "==> snapshot numbers match the raw payload"
+node scripts/verify-snapshot.mjs | tail -1 || fail=1
+
 echo "==> no raw dataset committed"
 if git ls-files --error-unmatch data/raw >/dev/null 2>&1; then
   echo "data/raw must not be committed"; fail=1

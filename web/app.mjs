@@ -1,6 +1,7 @@
-import { Scene, fmtNum, AXIS_META } from "./lib/scene.mjs";
+import { Scene } from "./lib/scene.mjs";
+import { AXES, formatCost, formatSeconds, formatRatio } from "./lib/axes.mjs";
 import { VIEWS, VIEW_ORDER, makeScale, shortestAngle, easeInOutCubic } from "./lib/projection.mjs";
-import { paretoFront, OBJECTIVES } from "./lib/pareto.mjs";
+import { paretoFront, dominates, OBJECTIVES } from "./lib/pareto.mjs";
 
 const $ = (sel) => document.querySelector(sel);
 const canvas = $("#plot");
@@ -11,10 +12,9 @@ const state = {
   latency: "endToEnd",
   view: "intelligenceCost",
   scope: "representative",
-  emphasiseHidden: true,
-  dimDominated: true,
   selected: null,
   animation: null,
+  rows: [],
 };
 
 const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
@@ -24,20 +24,20 @@ async function boot() {
   state.data = await res.json();
   buildControls();
   rebuild();
-  window.addEventListener("resize", () => {
-    scene.resize();
-    draw();
-  });
+  renderLegend();
   wireInteraction();
   renderMeta();
   scene.resize();
   draw();
+  window.addEventListener("resize", () => {
+    scene.resize();
+    draw();
+  });
 }
 
 /** Rows currently in scope, with the active latency resolved onto `time`. */
 function activeRows() {
-  const { data } = state;
-  return data.rows.filter((r) => {
+  return state.data.rows.filter((r) => {
     if (!Number.isFinite(r.latencies[state.latency])) return false;
     if (state.scope === "representative" && !r.representative) return false;
     if (state.scope === "open" && !r.openWeights) return false;
@@ -48,6 +48,7 @@ function activeRows() {
 function rebuild() {
   const rows = activeRows();
   for (const r of rows) r.time = r.latencies[state.latency];
+  state.rows = rows;
 
   // Dominance is recomputed against exactly the configurations on screen, so a
   // point is never greyed out by a rival the reader has filtered away.
@@ -57,6 +58,7 @@ function rebuild() {
   const fic = ids(paretoFront(rows, [intelligence, cost]));
   const fit = ids(paretoFront(rows, [intelligence, time]));
   const fct = ids(paretoFront(rows, [cost, time]));
+  state.fronts = { intelligenceCost: fic, intelligenceTime: fit, costTime: fct };
 
   const scales = {
     cost: makeScale(rows.map((r) => r.cost), { log: true }),
@@ -94,6 +96,7 @@ function rebuild() {
   });
 
   scene.setPoints(points);
+  state.points = points;
   state.counts = {
     plotted: points.length,
     hidden: points.filter((p) => p.state === "hidden").length,
@@ -104,22 +107,20 @@ function rebuild() {
 
   // Keep any selection alive across a rebuild.
   if (state.selected) {
-    const again = points.find((p) => p.id === state.selected.id);
-    state.selected = again ?? null;
+    state.selected = points.find((p) => p.id === state.selected.id) ?? null;
     scene.selected = state.selected;
   }
 
-  renderStats();
-  renderLegend();
+  renderFinding();
   renderDetail();
+  $("#view-caption").textContent = viewCaption(VIEWS[state.view]);
 }
 
 function draw() {
   scene.render({
-    view: VIEWS[state.view],
+    view: state.view,
     scales: state.scales,
-    emphasiseHidden: state.emphasiseHidden,
-    dimDominated: state.dimDominated,
+    fronts: state.fronts,
   });
 }
 
@@ -130,7 +131,9 @@ function goToView(id) {
   document.querySelectorAll("[data-view]").forEach((b) => {
     b.setAttribute("aria-pressed", String(b.dataset.view === id));
   });
-  $("#view-caption").textContent = target.caption;
+  $("#view-caption").textContent = viewCaption(target);
+  renderLegend();
+  canvas.setAttribute("aria-label", altText());
 
   const from = { ...scene.camera };
   const to = {
@@ -145,7 +148,7 @@ function goToView(id) {
     return;
   }
 
-  const duration = 900;
+  const duration = 950;
   const start = performance.now();
   const step = (now) => {
     const t = Math.min(1, (now - start) / duration);
@@ -155,8 +158,7 @@ function goToView(id) {
       elevation: from.elevation + (to.elevation - from.elevation) * e,
     };
     draw();
-    if (t < 1) state.animation = requestAnimationFrame(step);
-    else state.animation = null;
+    state.animation = t < 1 ? requestAnimationFrame(step) : null;
   };
   state.animation = requestAnimationFrame(step);
 }
@@ -165,18 +167,16 @@ function buildControls() {
   const views = $("#views");
   views.innerHTML = "";
   for (const id of VIEW_ORDER) {
-    const v = VIEWS[id];
     const b = document.createElement("button");
-    b.className = "chip";
+    b.className = id === "three" ? "chip chip-reveal" : "chip";
     b.dataset.view = id;
-    b.textContent = v.label;
+    b.textContent = id === "three" ? `${VIEWS[id].label} \u27f3` : VIEWS[id].label;
     b.setAttribute("aria-pressed", String(id === state.view));
     b.addEventListener("click", () => goToView(id));
     views.append(b);
   }
 
   const latency = $("#latency");
-  latency.innerHTML = "";
   for (const [key, def] of Object.entries(state.data.latencyDefinitions)) {
     const o = document.createElement("option");
     o.value = key;
@@ -186,33 +186,39 @@ function buildControls() {
   latency.value = state.latency;
   latency.addEventListener("change", () => {
     state.latency = latency.value;
-    $("#latency-hint").textContent = state.data.latencyDefinitions[state.latency].hint;
     rebuild();
     draw();
   });
-  $("#latency-hint").textContent = state.data.latencyDefinitions[state.latency].hint;
 
   const scope = $("#scope");
   scope.value = state.scope;
   scope.addEventListener("change", () => {
     state.scope = scope.value;
-    state.selected = null;
-    scene.selected = null;
+    select(null);
     rebuild();
     draw();
-    renderDetail();
   });
 
-  $("#toggle-hidden").addEventListener("change", (e) => {
-    state.emphasiseHidden = e.target.checked;
-    draw();
-  });
-  $("#toggle-dim").addEventListener("change", (e) => {
-    state.dimDominated = e.target.checked;
-    draw();
-  });
+}
 
-  $("#view-caption").textContent = VIEWS[state.view].caption;
+/**
+ * Lead the caption with how many models win the chart on screen. The whole
+ * argument is that the two published charts disagree about the answer and
+ * still both miss some, which only lands if the reader sees the counts move.
+ */
+function viewCaption(view) {
+  const c = state.counts;
+  if (!view.axes.horizontal) {
+    return `${c.front3d} models survive all three axes \u2014 and ${c.hidden} of them appear on neither flat chart.`;
+  }
+  const n = view.id === "intelligenceCost" ? c.frontIntCost : c.frontIntTime;
+  return `${n} models win this chart. ${view.caption}`;
+}
+
+function select(point) {
+  state.selected = point;
+  scene.selected = point;
+  renderDetail();
 }
 
 function wireInteraction() {
@@ -248,12 +254,10 @@ function wireInteraction() {
       tooltip.hidden = false;
       tooltip.innerHTML = tooltipHtml(hit);
       const rect = canvas.getBoundingClientRect();
-      const tw = tooltip.offsetWidth;
-      const th = tooltip.offsetHeight;
-      let tx = x + 14;
-      let ty = y + 14;
-      if (tx + tw > rect.width) tx = x - tw - 14;
-      if (ty + th > rect.height) ty = y - th - 14;
+      let tx = x + 16;
+      let ty = y + 16;
+      if (tx + tooltip.offsetWidth > rect.width) tx = x - tooltip.offsetWidth - 16;
+      if (ty + tooltip.offsetHeight > rect.height) ty = y - tooltip.offsetHeight - 16;
       tooltip.style.transform = `translate(${Math.max(4, tx)}px, ${Math.max(4, ty)}px)`;
       canvas.style.cursor = "pointer";
     } else {
@@ -266,9 +270,7 @@ function wireInteraction() {
     const { x, y } = pointerPos(e);
     const hit = scene.hitTest(x, y);
     if (hit) {
-      state.selected = hit;
-      scene.selected = hit;
-      renderDetail();
+      select(hit);
       draw();
       return;
     }
@@ -285,14 +287,12 @@ function wireInteraction() {
 
   const endDrag = (e) => {
     if (dragging && !dragging.moved) {
-      state.selected = null;
-      scene.selected = null;
-      renderDetail();
+      select(null);
       draw();
     }
     dragging = null;
     canvas.style.cursor = "grab";
-    if (e && e.pointerId !== undefined && canvas.hasPointerCapture?.(e.pointerId)) {
+    if (e?.pointerId !== undefined && canvas.hasPointerCapture?.(e.pointerId)) {
       canvas.releasePointerCapture(e.pointerId);
     }
   };
@@ -307,13 +307,22 @@ function wireInteraction() {
   });
 
   document.addEventListener("keydown", (e) => {
+    if (e.target instanceof HTMLSelectElement) return;
     const idx = VIEW_ORDER.indexOf(state.view);
     if (e.key === "ArrowRight") goToView(VIEW_ORDER[(idx + 1) % VIEW_ORDER.length]);
-    if (e.key === "ArrowLeft") goToView(VIEW_ORDER[(idx - 1 + VIEW_ORDER.length) % VIEW_ORDER.length]);
+    if (e.key === "ArrowLeft") goToView(VIEW_ORDER[(idx + 3) % VIEW_ORDER.length]);
     if (e.key === "Escape") {
-      state.selected = null;
-      scene.selected = null;
-      renderDetail();
+      select(null);
+      draw();
+    }
+  });
+
+  $("#detail").addEventListener("click", (e) => {
+    const el = e.target.closest("[data-pick]");
+    if (!el) return;
+    const point = state.points.find((p) => p.id === el.dataset.pick);
+    if (point) {
+      select(point);
       draw();
     }
   });
@@ -324,104 +333,243 @@ function markFreeCamera() {
   $("#view-caption").textContent = "Free camera. Pick a view to snap back to a familiar angle.";
 }
 
+// ------------------------------------------------------------------ rendering
+
 function tooltipHtml(p) {
   const r = p.row;
-  const badge =
+  const verdict =
     p.state === "hidden"
-      ? `<span class="tag tag-hidden">Hidden from both flat charts</span>`
+      ? `<span class="tag tag-hidden">Best \u2014 but on neither flat chart</span>`
       : p.onFront.three
-        ? `<span class="tag tag-front">On the 3D frontier</span>`
-        : `<span class="tag tag-dominated">Dominated</span>`;
+        ? `<span class="tag tag-front">Nothing beats it</span>`
+        : `<span class="tag tag-dominated">Something beats it</span>`;
   return `
-    <strong>${escapeHtml(r.model)}</strong>
+    <strong>${escapeHtml(r.shortName)}</strong>
     <div class="tooltip-host">${escapeHtml(r.host ?? "unknown host")}</div>
-    ${badge}
+    ${verdict}
     <dl>
       <div><dt>Intelligence</dt><dd>${r.intelligence.toFixed(1)}</dd></div>
-      <div><dt>Cost / task</dt><dd>$${fmtNum(r.cost)}</dd></div>
-      <div><dt>${escapeHtml(AXIS_META.time.short)}</dt><dd>${fmtNum(r.latencies[state.latency])}s</dd></div>
+      <div><dt>Cost</dt><dd>${formatCost(r.cost)}</dd></div>
+      <div><dt>Time</dt><dd>${formatSeconds(r.time)}</dd></div>
     </dl>`;
+}
+
+/** Where a value sits in the field, 0 worst to 1 best, on the plotted scale. */
+function goodness(row, key) {
+  const n = state.scales[key](row[key]);
+  return AXES[key].dir > 0 ? (n + 1) / 2 : 1 - (n + 1) / 2;
+}
+
+function metricBar(key, row) {
+  const pct = Math.round(goodness(row, key) * 100);
+  const value = AXES[key].format(row[key]);
+  return `
+    <div class="metric">
+      <span class="metric-k">${escapeHtml(AXES[key].short)}</span>
+      <span class="metric-bar"><i style="width:${pct}%"></i></span>
+      <span class="metric-v">${escapeHtml(value)}</span>
+    </div>`;
 }
 
 function renderDetail() {
   const el = $("#detail");
   const p = state.selected;
   if (!p) {
-    el.innerHTML = `<p class="detail-empty">Select any point to see why it sits where it does, and what beats it.</p>`;
+    el.innerHTML = emptyDetailHtml();
     return;
   }
-  const r = p.row;
-  const rows = activeRows();
-  const dominators = rows.filter(
-    (o) =>
-      o.id !== r.id &&
-      o.intelligence >= r.intelligence &&
-      o.cost <= r.cost &&
-      o.latencies[state.latency] <= r.latencies[state.latency],
-  );
 
-  const onCharts = [
-    p.onFront.intCost ? "Intelligence vs Cost" : null,
-    p.onFront.intTime ? "Intelligence vs Time" : null,
-    p.onFront.costTime ? "Cost vs Time" : null,
-  ].filter(Boolean);
+  const r = p.row;
+  const rivals = {
+    intCost: bestRival(r, [OBJECTIVES.intelligence, OBJECTIVES.cost]),
+    intTime: bestRival(r, [OBJECTIVES.intelligence, OBJECTIVES.time]),
+    three: bestRival(r, [OBJECTIVES.intelligence, OBJECTIVES.cost, OBJECTIVES.time]),
+  };
 
   el.innerHTML = `
-    <h3>${escapeHtml(r.model)}</h3>
-    <p class="detail-host">${escapeHtml(r.host ?? "unknown host")}${
-      r.openWeights ? " &middot; open weights" : ""
-    }</p>
-    <dl class="detail-metrics">
-      <div><dt>Intelligence Index</dt><dd>${r.intelligence.toFixed(1)}${r.estimated ? " (est.)" : ""}</dd></div>
-      <div><dt>Cost per task</dt><dd>$${fmtNum(r.cost)}</dd></div>
-      <div><dt>${escapeHtml(state.data.latencyDefinitions[state.latency].label)}</dt><dd>${fmtNum(
-        r.latencies[state.latency],
-      )}s</dd></div>
-    </dl>
-    <p class="detail-line"><strong>Status.</strong> ${
-      p.onFront.three
-        ? "Nothing in this field is at least as good on all three axes."
-        : `${dominators.length} configuration${dominators.length === 1 ? "" : "s"} beat${
-            dominators.length === 1 ? "s" : ""
-          } it on all three axes.`
-    }</p>
-    <p class="detail-line"><strong>Visible on.</strong> ${
-      onCharts.length ? escapeHtml(onCharts.join(", ")) : "None of the flat charts."
-    }</p>
-    ${
-      p.state === "hidden"
-        ? `<p class="detail-callout">This is one of the configurations the two published charts cannot show. Each flat view finds something that beats it, but no single configuration beats it on all three axes at once.</p>`
-        : ""
-    }
-    ${
-      dominators.length
-        ? `<p class="detail-line"><strong>Beaten by.</strong> ${escapeHtml(
-            dominators
-              .slice(0, 3)
-              .map((d) => `${d.model} @ ${d.host}`)
-              .join("; "),
-          )}${dominators.length > 3 ? ` and ${dominators.length - 3} more` : ""}.</p>`
-        : ""
-    }`;
+    <div class="detail-head">
+      <div>
+        <h3>${escapeHtml(r.shortName)}</h3>
+        <p class="detail-host">${escapeHtml(r.host ?? "unknown host")}${
+          r.openWeights ? " \u00b7 open weights" : ""
+        }${r.creator ? ` \u00b7 ${escapeHtml(r.creator)}` : ""}</p>
+      </div>
+      ${
+        p.state === "hidden"
+          ? `<span class="tag tag-hidden">Hidden winner</span>`
+          : p.onFront.three
+            ? `<span class="tag tag-front">Nothing beats it</span>`
+            : `<span class="tag tag-dominated">Beaten</span>`
+      }
+    </div>
+    <div class="metrics">
+      ${metricBar("intelligence", r)}
+      ${metricBar("cost", r)}
+      ${metricBar("time", r)}
+    </div>
+    ${verdictHtml(p, rivals)}`;
 }
 
-function renderStats() {
+/**
+ * For a hidden winner, name the rival that knocks it off each published chart
+ * and say what that rival gives up. That is the whole argument, per point.
+ */
+function verdictHtml(p, rivals) {
+  const r = p.row;
+
+  if (p.state === "hidden") {
+    const lines = [
+      rivalLine("On the smart-vs-cheap chart", rivals.intCost, r, "time"),
+      rivalLine("On the smart-vs-fast chart", rivals.intTime, r, "cost"),
+    ].filter(Boolean);
+    return `
+      <div class="verdict verdict-hidden">
+        <p class="verdict-lead">Both published charts throw this one away. Neither is right.</p>
+        <ul>${lines.join("")}</ul>
+        <p class="verdict-close">Each rival wins only by ignoring an axis. Judge all three at
+        once and nothing here beats it.</p>
+      </div>`;
+  }
+
+  if (p.onFront.three) {
+    const shows = [
+      p.onFront.intCost ? "smart vs cheap" : null,
+      p.onFront.intTime ? "smart vs fast" : null,
+    ].filter(Boolean);
+    return `
+      <div class="verdict">
+        <p class="verdict-lead">Nothing in this field is at least as good on intelligence,
+        cost and speed together.</p>
+        <p class="verdict-note">${
+          shows.length
+            ? `Visible on the ${escapeHtml(shows.join(" and "))} chart${shows.length > 1 ? "s" : ""}.`
+            : "Only the three-way view finds it."
+        }</p>
+      </div>`;
+  }
+
+  const beaten = rivals.three;
+  return `
+    <div class="verdict">
+      <p class="verdict-lead">Beaten outright.</p>
+      ${
+        beaten
+          ? `<p class="verdict-note"><strong>${escapeHtml(beaten.shortName)}</strong> on
+             ${escapeHtml(beaten.host ?? "another host")} is smarter or equal, no dearer and no
+             slower \u2014 ${escapeHtml(compareWords(beaten, r))}.</p>`
+          : ""
+      }
+    </div>`;
+}
+
+function rivalLine(where, rival, row, givesUp) {
+  if (!rival) return "";
+  const ratio = formatRatio(rival[givesUp] / row[givesUp]);
+  const cost = ratio
+    ? `${ratio} ${givesUp === "cost" ? "the price" : "the wait"}`
+    : `worse on ${AXES[givesUp].short.toLowerCase()}`;
+  return `<li><span class="rival-where">${escapeHtml(where)}</span>
+    <strong>${escapeHtml(rival.shortName)}</strong> looks better \u2014 but it is
+    ${escapeHtml(cost)}.</li>`;
+}
+
+function compareWords(better, row) {
+  const parts = [];
+  if (better.intelligence > row.intelligence) {
+    parts.push(`+${(better.intelligence - row.intelligence).toFixed(1)} intelligence`);
+  }
+  const cheaper = formatRatio(row.cost / better.cost);
+  if (cheaper) parts.push(`${cheaper} cheaper`);
+  const faster = formatRatio(row.time / better.time);
+  if (faster) parts.push(`${faster} faster`);
+  return parts.length ? parts.join(", ") : "equal or better on every axis";
+}
+
+/** The most convincing rival: the one that dominates with the most intelligence. */
+function bestRival(row, objectives) {
+  let best = null;
+  for (const other of state.rows) {
+    if (other.id === row.id) continue;
+    if (!dominates(other, row, objectives)) continue;
+    if (!best || other.intelligence > best.intelligence) best = other;
+  }
+  return best;
+}
+
+/**
+ * With nothing selected, answer the question a first-time reader actually has:
+ * of the models that survive on all three axes, which is the pick?
+ */
+function emptyDetailHtml() {
+  const front = state.points.filter((p) => p.onFront.three);
+  if (front.length === 0) return `<p class="detail-empty">No configurations in this filter.</p>`;
+
+  const pick = (label, fn, key) => {
+    const p = front.reduce((a, b) => (fn(b.row) > fn(a.row) ? b : a));
+    return `
+      <button class="pick" data-pick="${p.id}">
+        <span class="pick-l">${label}</span>
+        <span class="pick-n">${escapeHtml(p.row.shortName)}</span>
+        <span class="pick-v">${escapeHtml(AXES[key].format(p.row[key]))}</span>
+      </button>`;
+  };
+
+  return `
+    <p class="detail-lead">Of the ${front.length} that survive on all three axes:</p>
+    <div class="picks">
+      ${pick("Smartest", (r) => r.intelligence, "intelligence")}
+      ${pick("Cheapest", (r) => -r.cost, "cost")}
+      ${pick("Fastest", (r) => -r.time, "time")}
+    </div>
+    <p class="detail-empty">Pick any point on the chart to see what beats it, and what does not.</p>`;
+}
+
+function renderFinding() {
   const c = state.counts;
-  $("#stats").innerHTML = `
-    <div class="stat"><span class="stat-n">${c.plotted}</span><span class="stat-l">configurations plotted</span></div>
-    <div class="stat"><span class="stat-n">${c.front3d}</span><span class="stat-l">survive in three dimensions</span></div>
-    <div class="stat stat-key"><span class="stat-n">${c.hidden}</span><span class="stat-l">optimal, yet invisible on both flat charts</span></div>`;
+  $("#finding").innerHTML = `
+    <span class="figure"><b>${c.plotted}</b> models on the chart</span>
+    <span class="figure figure-front"><b>${c.front3d}</b> worth considering</span>
+    <span class="figure figure-hidden"><b>${c.hidden}</b> the flat charts hide</span>`;
   $("#front-note").textContent =
-    `Of the ${c.plotted} configurations shown, ${c.frontIntCost} lead the intelligence-vs-cost chart and ` +
-    `${c.frontIntTime} lead intelligence-vs-time. Judge all three axes at once and ${c.front3d} survive, ` +
-    `of which ${c.hidden} appear on neither flat chart.`;
+    `Of the ${c.plotted} configurations shown, ${c.frontIntCost} lead the smart-vs-cheap chart and ` +
+    `${c.frontIntTime} lead smart-vs-fast. Judge all three axes at once and ${c.front3d} survive, ` +
+    `of which ${c.hidden} appear on neither published chart.`;
+  canvas.setAttribute("aria-label", altText());
 }
 
+/**
+ * A mark means something different in each view, so the legend is rebuilt with
+ * the camera. On a flat chart a diamond is a winner of that chart; in the
+ * rotated view it is a winner overall, and the second colour is the finding.
+ */
 function renderLegend() {
+  const view = VIEWS[state.view];
+  const c = state.counts;
+  if (!view.axes.horizontal) {
+    $("#legend").innerHTML = `
+      <span class="key"><i class="swatch swatch-front"></i>Best on all three \u2014 a flat chart already showed it</span>
+      <span class="key"><i class="swatch swatch-hidden"></i>Best on all three \u2014 <b>on neither flat chart</b> (${c.hidden})</span>
+      <span class="key"><i class="swatch swatch-dom"></i>Beaten</span>`;
+    return;
+  }
+  // Naming the two axes teaches the test the chart is applying, which a bare
+  // word like "optimal" never does.
+  const both = `${AXES[view.axes.vertical].better} and ${AXES[view.axes.horizontal].better}`;
   $("#legend").innerHTML = `
-    <span class="key"><i class="swatch swatch-hidden"></i>Optimal only in 3D</span>
-    <span class="key"><i class="swatch swatch-front"></i>Leads a flat chart</span>
-    <span class="key"><i class="swatch swatch-dom"></i>Dominated</span>`;
+    <span class="key"><i class="swatch swatch-front"></i>Nothing here is both <b>${escapeHtml(both)}</b></span>
+    <span class="key"><i class="swatch swatch-dom"></i>Something on this chart is both</span>
+    <span class="key"><i class="swatch swatch-line"></i>The frontier; everything shaded is beaten</span>`;
+}
+
+function altText() {
+  const c = state.counts;
+  const v = VIEWS[state.view];
+  return (
+    `${v.label}. Scatter plot of ${c.plotted} AI model configurations by intelligence, cost per ` +
+    `task and response time. A frontier line marks the best available at each price; ${c.front3d} ` +
+    `configurations are not beaten on all three measures at once, and ${c.hidden} of those appear ` +
+    `on neither of the two published two-axis charts.`
+  );
 }
 
 function renderMeta() {
@@ -429,8 +577,8 @@ function renderMeta() {
   const when = new Date(d.capturedAt);
   $("#meta").innerHTML = `Data captured ${when.toISOString().slice(0, 16).replace("T", " ")} UTC from
     <a href="${d.source.url}" rel="noopener">${escapeHtml(d.source.name)}</a>.
-    ${d.counts.endpointsInSource} endpoints in source, ${d.counts.plotted} with complete intelligence, cost and latency.
-    Values are live and change; this page shows a snapshot.`;
+    ${d.counts.endpointsInSource} endpoints in source, ${d.counts.plotted} with complete
+    intelligence, cost and latency. Values are live and change; this page shows a snapshot.`;
 }
 
 const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));

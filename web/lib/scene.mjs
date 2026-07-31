@@ -1,35 +1,30 @@
-import { rotate, ticks } from "./projection.mjs";
-
-const AXIS_META = {
-  cost: { label: "Cost per Intelligence Index task", short: "Cost", format: (v) => `$${fmtNum(v)}` },
-  intelligence: { label: "Intelligence Index", short: "Intelligence", format: (v) => v.toFixed(0) },
-  time: { label: "Response time", short: "Time", format: (v) => `${fmtNum(v)}s` },
-};
-
-export function fmtNum(v) {
-  if (v >= 100) return v.toFixed(0);
-  if (v >= 10) return v.toFixed(1);
-  if (v >= 1) return v.toFixed(2);
-  if (v >= 0.01) return v.toFixed(3);
-  return v.toExponential(1);
-}
+import { rotate, ticks, flatness, VIEWS } from "./projection.mjs";
+import { AXES, betterEnd } from "./axes.mjs";
+import { attainmentPath } from "./pareto.mjs";
 
 function css(name, fallback) {
   const v = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
   return v || fallback;
 }
 
+/**
+ * Chart colour is decided here rather than by the page's design language.
+ * A scatter plot has to hold three roles apart across a hundred overlapping
+ * marks a few pixels wide, which needs more chroma and a wider lightness gap
+ * than calm UI accents give. Values live in the chart block of styles.css.
+ */
 export function palette() {
   return {
-    bg: css("--bg", "#f7f8f6"),
-    fg: css("--fg", "#1b1f1c"),
-    muted: css("--muted", "#6b736c"),
-    border: css("--border", "#dfe3df"),
-    accent: css("--accent", "#6f9a7d"),
-    accentInk: css("--accent-ink", "#4c7359"),
-    accentLine: css("--accent-line", "#a9c6b3"),
-    highlight: css("--highlight", "#c98a26"),
-    highlightSoft: css("--highlight-soft", "#f2e2c4"),
+    bg: css("--surface", "#ffffff"),
+    ink: css("--chart-ink", "#22272a"),
+    label: css("--chart-label", "#5b6560"),
+    grid: css("--chart-grid", "#eceeec"),
+    axis: css("--chart-axis", "#4a534e"),
+    beaten: css("--chart-beaten", "#c3c8c5"),
+    frontier: css("--chart-frontier", "#116b4e"),
+    frontierSoft: css("--chart-frontier-soft", "#cfe6da"),
+    reveal: css("--chart-reveal", "#c2410c"),
+    revealSoft: css("--chart-reveal-soft", "#fbdcc4"),
   };
 }
 
@@ -41,10 +36,24 @@ for (let i = 0; i < CORNERS.length; i++) {
   for (let j = i + 1; j < CORNERS.length; j++) {
     const a = CORNERS[i];
     const b = CORNERS[j];
-    const diff = (a.x !== b.x) + (a.y !== b.y) + (a.z !== b.z);
-    if (diff === 1) EDGES.push([i, j]);
+    if ((a.x !== b.x) + (a.y !== b.y) + (a.z !== b.z) === 1) EDGES.push([i, j]);
   }
 }
+
+/** Where each axis name hangs in the rotated view, just past its far corner. */
+const LABEL_ANCHORS = [
+  { key: "cost", x: 1.3, y: -1, z: -1 },
+  { key: "intelligence", x: -1, y: 1.24, z: -1 },
+  { key: "time", x: -1, y: -1, z: 1.3 },
+];
+
+// Canvas font strings are not CSS: `var(--font-sans)` there is invalid and the
+// assignment is silently dropped, so the stack has to be literal.
+const UI = "Inter, system-ui, -apple-system, sans-serif";
+const TITLE = `600 13px ${UI}`;
+const SUB = `500 11px ${UI}`;
+const TICK = `11px ${UI}`;
+const MARK = `500 11px ${UI}`;
 
 export class Scene {
   constructor(canvas) {
@@ -54,69 +63,108 @@ export class Scene {
     this.camera = { azimuth: 0, elevation: 0 };
     this.hovered = null;
     this.selected = null;
+    this.roles = new Map();
     this.dpr = Math.min(window.devicePixelRatio || 1, 2);
   }
 
   resize() {
     const rect = this.canvas.getBoundingClientRect();
-    this.width = rect.width;
-    this.height = rect.height;
-    this.canvas.width = Math.round(rect.width * this.dpr);
-    this.canvas.height = Math.round(rect.height * this.dpr);
+    this.width = Math.max(240, rect.width);
+    this.height = Math.max(240, rect.height);
+    this.canvas.width = Math.round(this.width * this.dpr);
+    this.canvas.height = Math.round(this.height * this.dpr);
     this.ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
-    // Room for axis tick labels on the left and below in the flat views.
-    this.padX = Math.min(70, this.width * 0.09);
-    this.padY = Math.min(56, this.height * 0.1);
-    this.cx = this.width / 2 + this.padX * 0.32;
-    this.cy = this.height / 2 - this.padY * 0.18;
+    this.compact = this.width < 580;
   }
 
   /**
-   * Scale the cube to fill the frame at the current camera angle. A flat view
-   * then fills the canvas like an ordinary chart, while a rotated view zooms
-   * out just enough to keep its corners inside.
+   * A flat view spends its margins on axis furniture; a rotated one has none
+   * to draw and can use nearly the whole canvas.
    */
-  fitScale() {
-    let ex = 0;
-    let ey = 0;
-    for (const corner of CORNERS) {
-      const r = rotate(corner, this.camera.azimuth, this.camera.elevation);
-      ex = Math.max(ex, Math.abs(r.x));
-      ey = Math.max(ey, Math.abs(r.y));
-    }
-    const halfW = Math.max(20, this.width / 2 - this.padX);
-    const halfH = Math.max(20, this.height / 2 - this.padY);
-    return Math.min(halfW / (ex || 1), halfH / (ey || 1));
+  layout(isFlat) {
+    const c = this.compact;
+    // Flat views carry a three-line axis block below the plot (name, unit,
+    // direction), which needs the same room whatever the viewport, because the
+    // type does not shrink. Only the side margins compress.
+    this.pad = isFlat
+      ? { left: c ? 40 : 52, right: c ? 18 : 34, top: c ? 44 : 52, bottom: c ? 70 : 66 }
+      : { left: 12, right: 12, top: 18, bottom: 18 };
+    this.plot = {
+      x0: this.pad.left,
+      y0: this.pad.top,
+      x1: this.width - this.pad.right,
+      y1: this.height - this.pad.bottom,
+    };
+    this.cx = (this.plot.x0 + this.plot.x1) / 2;
+    this.cy = (this.plot.y0 + this.plot.y1) / 2;
   }
 
-  /** points: [{ id, cube:{x,y,z}, state, row }] */
+  /**
+   * A flat view should fill its frame like an ordinary chart, which means
+   * stretching the two screen axes independently. A rotated view must not, or
+   * the box would shear as it turns, so the stretch is capped there and then
+   * blended by how far the camera has left an axis-aligned pose.
+   *
+   * Fitting uses the real bounding box rather than a symmetric extent: a
+   * rotated cube plus its axis names is lopsided, and assuming symmetry leaves
+   * a dead band down one side of the canvas.
+   */
+  fit(f) {
+    const bounds = (pts) => {
+      const b = { x0: Infinity, x1: -Infinity, y0: Infinity, y1: -Infinity };
+      for (const p of pts) {
+        const r = rotate(p, this.camera.azimuth, this.camera.elevation);
+        b.x0 = Math.min(b.x0, r.x);
+        b.x1 = Math.max(b.x1, r.x);
+        b.y0 = Math.min(b.y0, r.y);
+        b.y1 = Math.max(b.y1, r.y);
+      }
+      return b;
+    };
+
+    // Rotated views must leave room for the axis names hanging outside the box.
+    const box = bounds(CORNERS);
+    const withLabels = bounds([...CORNERS, ...LABEL_ANCHORS]);
+    const b = {
+      x0: lerp(withLabels.x0, box.x0, f),
+      x1: lerp(withLabels.x1, box.x1, f),
+      y0: lerp(withLabels.y0, box.y0, f),
+      y1: lerp(withLabels.y1, box.y1, f),
+    };
+
+    const availW = Math.max(40, this.plot.x1 - this.plot.x0);
+    const availH = Math.max(40, this.plot.y1 - this.plot.y0);
+    const sx = availW / Math.max(1e-6, b.x1 - b.x0);
+    const sy = availH / Math.max(1e-6, b.y1 - b.y0);
+    const uniform = Math.min(sx, sy);
+    const cap = 1.8;
+
+    return {
+      kx: lerp(Math.min(sx, uniform * cap), sx, f),
+      ky: lerp(Math.min(sy, uniform * cap), sy, f),
+      ox: (b.x0 + b.x1) / 2,
+      oy: (b.y0 + b.y1) / 2,
+      flat: f,
+    };
+  }
+
+  /** points: [{ id, cube:{x,y,z}, state, onFront, row }] */
   setPoints(points) {
     this.points = points;
   }
 
   toScreen(cube) {
     const r = rotate(cube, this.camera.azimuth, this.camera.elevation);
-    const k = this.scale ?? this.fitScale();
-    return { x: this.cx + r.x * k, y: this.cy - r.y * k, depth: r.depth };
-  }
-
-  project() {
-    for (const p of this.points) {
-      const s = this.toScreen(p.cube);
-      p.sx = s.x;
-      p.sy = s.y;
-      p.depth = s.depth;
-    }
-    return this.points;
+    const k = this.k;
+    return { x: this.cx + (r.x - k.ox) * k.kx, y: this.cy - (r.y - k.oy) * k.ky, depth: r.depth };
   }
 
   hitTest(mx, my) {
     let best = null;
-    let bestDist = 16;
+    let bestDist = 15;
     for (const p of this.points) {
-      if (p.hidden) continue;
       const d = Math.hypot(p.sx - mx, p.sy - my);
-      const bias = p.state === "dominated" ? 2 : 0;
+      const bias = this.roles.get(p.id) === "beaten" ? 4 : 0;
       if (d + bias < bestDist) {
         bestDist = d + bias;
         best = p;
@@ -125,212 +173,495 @@ export class Scene {
     return best;
   }
 
+  /**
+   * What each mark means *in the view being shown*.
+   *
+   * A flat chart highlights its own winners and nothing else. Marking the
+   * three-dimensional winners here would put emphasis inside the region this
+   * same chart shades as beaten, which is a contradiction on the face of the
+   * plot. The rotated view is where the extra winners appear, and there the
+   * ones no flat chart could show are called out separately.
+   */
+  roleMap(view) {
+    const roles = new Map();
+    if (view.axes.horizontal) {
+      const ids = this.fronts?.[view.id];
+      for (const p of this.points) roles.set(p.id, ids?.has(p.id) ? "frontier" : "beaten");
+    } else {
+      for (const p of this.points) {
+        roles.set(p.id, p.state === "hidden" ? "reveal" : p.onFront.three ? "frontier" : "beaten");
+      }
+    }
+    return roles;
+  }
+
   render(opts) {
     const { ctx } = this;
     const c = palette();
+    const view = VIEWS[opts.view];
+    const f = flatness(this.camera);
+    const isFlat = Boolean(view.axes.horizontal) && f > 0.985;
+
+    this.fronts = opts.fronts;
+    this.viewId = opts.view;
+    this.roles = this.roleMap(view);
+    this.layout(isFlat);
+    this.k = this.fit(f);
+
+    for (const p of this.points) {
+      const s = this.toScreen(p.cube);
+      p.sx = s.x;
+      p.sy = s.y;
+      p.depth = s.depth;
+    }
+
     ctx.clearRect(0, 0, this.width, this.height);
 
-    // Recomputed once per frame so every projection in the frame agrees.
-    this.scale = this.fitScale();
-    this.project();
-    this.drawFrame(c, opts);
-    this.drawPoints(c, opts);
-  }
-
-  drawFrame(c, { view, scales }) {
-    const { ctx } = this;
-    const flat = Math.abs(Math.sin(this.camera.elevation)) < 0.02 && isAxisAligned(this.camera.azimuth);
-
-    // Cube edges: prominent in 3D, nearly gone when the camera is flat, since a
-    // flat view should read as an ordinary 2D chart.
-    const edgeAlpha = flat ? 0.1 : 0.4;
-    ctx.strokeStyle = c.border;
-    ctx.lineWidth = 1;
-    ctx.globalAlpha = edgeAlpha;
-    for (const [i, j] of EDGES) {
-      const a = this.toScreen(CORNERS[i]);
-      const b = this.toScreen(CORNERS[j]);
-      ctx.beginPath();
-      ctx.moveTo(a.x, a.y);
-      ctx.lineTo(b.x, b.y);
-      ctx.stroke();
+    if (isFlat) {
+      this.frame = this.flatFrame(view);
+      this.drawGrid(c, view, opts.scales);
+      this.drawFrontier(c, view);
+      this.drawPoints(c, false);
+      this.drawFlatAxes(c, view, opts.scales);
+    } else {
+      this.frontierScreen = null;
+      this.drawCube(c);
+      this.drawDropLines(c);
+      this.drawPoints(c, true);
+      this.drawCubeAxisLabels(c);
     }
-    ctx.globalAlpha = 1;
 
-    if (view.axes.horizontal) this.drawFlatAxes(c, view, scales);
-    else this.drawCubeAxisLabels(c, scales);
+    this.drawLabels(c, isFlat);
   }
 
-  /** In a flat view, draw real chart axes with ticks along the cube's edge. */
+  // ---------------------------------------------------------------- flat view
+
+  /**
+   * Which end of each axis lands at screen left and screen bottom. The camera
+   * decides this, not the cube: at some angles the low end of an axis projects
+   * to the right, and furniture drawn at a hard-coded corner would then float
+   * across the middle of the chart.
+   */
+  flatFrame(view) {
+    const at = (h, v) => this.toScreen(cubeFor(view, h, v));
+    const o = at(-1, -1);
+    return { hNear: at(1, -1).x < o.x ? 1 : -1, vNear: at(-1, 1).y > o.y ? 1 : -1 };
+  }
+
+  drawGrid(c, view, scales) {
+    const { ctx } = this;
+    ctx.save();
+    ctx.strokeStyle = c.grid;
+    ctx.lineWidth = 1;
+    for (const key of ["horizontal", "vertical"]) {
+      const scale = scales[view.axes[key]];
+      for (const t of ticks(scale, 5)) {
+        const n = scale(t);
+        if (n < -1.001 || n > 1.001) continue;
+        const ends = key === "horizontal" ? [[n, -1], [n, 1]] : [[-1, n], [1, n]];
+        line(ctx, this.toScreen(cubeFor(view, ...ends[0])), this.toScreen(cubeFor(view, ...ends[1])));
+      }
+    }
+    ctx.restore();
+  }
+
+  /**
+   * The dominance boundary, drawn. Shading everything the frontier beats turns
+   * "which of these is better?" into something read at a glance rather than
+   * deduced from the colour of a four-pixel dot.
+   */
+  drawFrontier(c, view) {
+    const hKey = view.axes.horizontal;
+    const vKey = view.axes.vertical;
+    const ids = this.fronts?.[view.id];
+    if (!hKey || !ids) return;
+
+    const ax = { cost: "x", intelligence: "y", time: "z" };
+    const pts = this.points
+      .filter((p) => ids.has(p.id))
+      .map((p) => ({ h: p.cube[ax[hKey]], v: p.cube[ax[vKey]] }));
+    if (pts.length < 2) return;
+
+    const { line: path, region } = attainmentPath(pts, betterEnd(hKey), betterEnd(vKey));
+    const { ctx } = this;
+    const screen = (pt) => this.toScreen(cubeFor(view, pt.h, pt.v));
+    const trace = (points) => {
+      ctx.beginPath();
+      const s0 = screen(points[0]);
+      ctx.moveTo(s0.x, s0.y);
+      for (const pt of points.slice(1)) {
+        const s = screen(pt);
+        ctx.lineTo(s.x, s.y);
+      }
+    };
+
+    ctx.save();
+    trace(region);
+    ctx.closePath();
+    ctx.fillStyle = c.frontier;
+    ctx.globalAlpha = 0.05;
+    ctx.fill();
+
+    trace(path);
+    ctx.strokeStyle = c.frontier;
+    ctx.lineJoin = "round";
+    ctx.lineWidth = 2;
+    ctx.globalAlpha = 0.85;
+    ctx.stroke();
+    ctx.restore();
+
+    this.frontierScreen = path.map(screen);
+  }
+
+  /**
+   * Axes in the convention mathematical and economic charts use: a spine that
+   * ends in an arrowhead pointing the way the quantity grows, ticks outside
+   * the frame, and the name of the axis set beside that arrowhead rather than
+   * floating. Each name carries its unit, its scale, and which direction is
+   * the good one, because a reader should never have to infer any of the three.
+   */
   drawFlatAxes(c, view, scales) {
     const { ctx } = this;
     const hKey = view.axes.horizontal;
     const vKey = view.axes.vertical;
-    const hScale = scales[hKey];
-    const vScale = scales[vKey];
+    const hMeta = AXES[hKey];
+    const vMeta = AXES[vKey];
+    const { hNear, vNear } = this.frame;
+
+    const origin = this.toScreen(cubeFor(view, hNear, vNear));
+    const hFar = this.toScreen(cubeFor(view, -hNear, vNear));
+    const vFar = this.toScreen(cubeFor(view, hNear, -vNear));
 
     ctx.save();
-    ctx.font = "11px var(--font-ui, Inter), system-ui, sans-serif";
-    ctx.fillStyle = c.muted;
-    ctx.strokeStyle = c.border;
+    ctx.strokeStyle = c.axis;
+    ctx.fillStyle = c.axis;
+    ctx.lineWidth = 1.2;
+    line(ctx, origin, hFar);
+    line(ctx, origin, vFar);
 
-    const corner = this.toScreen(cubeFor(view, -1, -1));
-    const hEnd = this.toScreen(cubeFor(view, 1, -1));
-    const vEnd = this.toScreen(cubeFor(view, -1, 1));
+    // The arrowhead marks increasing value, so it sits at the cube's +1 end,
+    // whichever side of the screen the camera has put that end on. `hNear` is
+    // the end at screen left, so when that is already +1 the arrow belongs at
+    // the origin and points the other way.
+    arrowHead(ctx, hNear === 1 ? origin : hFar, hNear === 1 ? -1 : 1, 0);
+    arrowHead(ctx, vNear === 1 ? origin : vFar, 0, vNear === 1 ? -1 : 1);
 
-    ctx.globalAlpha = 0.9;
-    ctx.lineWidth = 1;
-    line(ctx, corner, hEnd);
-    line(ctx, corner, vEnd);
-
+    ctx.font = TICK;
+    ctx.fillStyle = c.label;
     ctx.textAlign = "center";
     ctx.textBaseline = "top";
-    for (const t of ticks(hScale, 5)) {
-      const n = hScale(t);
+    for (const t of ticks(scales[hKey], 5)) {
+      const n = scales[hKey](t);
       if (n < -1.001 || n > 1.001) continue;
-      const p = this.toScreen(cubeFor(view, n, -1));
-      ctx.globalAlpha = 0.55;
-      ctx.beginPath();
-      ctx.moveTo(p.x, p.y);
-      ctx.lineTo(p.x, p.y + 4);
-      ctx.stroke();
-      ctx.globalAlpha = 0.9;
-      ctx.fillText(AXIS_META[hKey].format(t), p.x, p.y + 7);
+      const p = this.toScreen(cubeFor(view, n, vNear));
+      ctx.strokeStyle = c.axis;
+      line(ctx, { x: p.x, y: p.y }, { x: p.x, y: p.y + 4 });
+      ctx.fillText(hMeta.formatTick(t), p.x, p.y + 8);
     }
 
     ctx.textAlign = "right";
     ctx.textBaseline = "middle";
-    for (const t of ticks(vScale, 5)) {
-      const n = vScale(t);
+    for (const t of ticks(scales[vKey], 5)) {
+      const n = scales[vKey](t);
       if (n < -1.001 || n > 1.001) continue;
-      const p = this.toScreen(cubeFor(view, -1, n));
-      ctx.globalAlpha = 0.55;
-      ctx.beginPath();
-      ctx.moveTo(p.x, p.y);
-      ctx.lineTo(p.x - 4, p.y);
-      ctx.stroke();
-      ctx.globalAlpha = 0.9;
-      ctx.fillText(AXIS_META[vKey].format(t), p.x - 7, p.y);
+      const p = this.toScreen(cubeFor(view, hNear, n));
+      ctx.strokeStyle = c.axis;
+      line(ctx, { x: p.x - 4, y: p.y }, { x: p.x, y: p.y });
+      ctx.fillText(vMeta.formatTick(t), p.x - 8, p.y);
     }
 
-    ctx.globalAlpha = 1;
-    ctx.fillStyle = c.fg;
-    ctx.font = "600 12px var(--font-ui, Inter), system-ui, sans-serif";
-    ctx.textAlign = "center";
-    ctx.textBaseline = "top";
-    const hLabel = hScale.log ? `${AXIS_META[hKey].label} (log)` : AXIS_META[hKey].label;
-    ctx.fillText(hLabel, (corner.x + hEnd.x) / 2, corner.y + 26);
+    // Horizontal axis: name and unit on one line, direction beneath, centred
+    // under the ticks where the eye already is after reading them.
+    const midX = (origin.x + hFar.x) / 2;
+    const baseY = origin.y + (this.compact ? 24 : 27);
+    this.axisTitle(c, midX, baseY, "center", hMeta, hNear === betterEnd(hKey) ? "\u2190" : "\u2192");
 
-    ctx.save();
-    ctx.translate(corner.x - 46, (corner.y + vEnd.y) / 2);
-    ctx.rotate(-Math.PI / 2);
-    ctx.textBaseline = "bottom";
-    const vLabel = vScale.log ? `${AXIS_META[vKey].label} (log)` : AXIS_META[vKey].label;
-    ctx.fillText(vLabel, 0, 0);
+    // Vertical axis: set horizontally above the top of the axis. Rotated text
+    // is measurably slower to read, and there is free space up there anyway.
+    const topY = Math.min(origin.y, vFar.y);
+    this.axisTitle(
+      c,
+      this.compact ? 2 : 6,
+      topY - (this.compact ? 40 : 46),
+      "left",
+      vMeta,
+      -vNear === betterEnd(vKey) ? "\u2191" : "\u2193",
+    );
     ctx.restore();
+
+  }
+
+  axisTitle(c, x, y, align, meta, arrow) {
+    const { ctx } = this;
+    ctx.save();
+    ctx.textAlign = align;
+    ctx.textBaseline = "top";
+
+    ctx.font = TITLE;
+    ctx.fillStyle = c.ink;
+    ctx.fillText(meta.label, x, y);
+
+    ctx.font = TICK;
+    ctx.fillStyle = c.label;
+    ctx.fillText(meta.unit, x, y + 16);
+
+    ctx.font = SUB;
+    ctx.fillStyle = c.frontier;
+    ctx.fillText(`${arrow} ${meta.better} is better`, x, y + 30);
     ctx.restore();
   }
 
-  /** In the 3D view, label each cube axis at its far end. */
-  drawCubeAxisLabels(c, scales) {
+  // ------------------------------------------------------------------ 3D view
+
+  drawCube(c) {
     const { ctx } = this;
     ctx.save();
-    ctx.font = "600 12px var(--font-ui, Inter), system-ui, sans-serif";
+    ctx.strokeStyle = c.grid;
+    ctx.lineWidth = 1;
+    for (const [i, j] of EDGES) line(ctx, this.toScreen(CORNERS[i]), this.toScreen(CORNERS[j]));
+    ctx.restore();
+  }
+
+  /** Depth is ambiguous under orthographic projection, so anchor what matters. */
+  drawDropLines(c) {
+    const { ctx } = this;
+    ctx.save();
+    ctx.lineWidth = 1;
+    for (const p of this.points) {
+      const role = this.roles.get(p.id);
+      if (role === "beaten") continue;
+      const reveal = role === "reveal";
+      const floor = this.toScreen({ x: p.cube.x, y: -1, z: p.cube.z });
+      ctx.strokeStyle = reveal ? c.reveal : c.frontier;
+      ctx.globalAlpha = reveal ? 0.3 : 0.14;
+      line(ctx, { x: p.sx, y: p.sy }, floor);
+    }
+    ctx.restore();
+  }
+
+  /**
+   * Each axis is named at its far corner and told which end that corner is.
+   * The word follows the axis direction rather than being fixed: the top of
+   * the intelligence axis is its good end, while the far end of cost and of
+   * time is the bad one.
+   */
+  drawCubeAxisLabels(c) {
+    const { ctx } = this;
+    ctx.save();
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
-    const specs = [
-      { key: "cost", at: { x: 1.28, y: -1, z: -1 } },
-      { key: "intelligence", at: { x: -1, y: 1.24, z: -1 } },
-      { key: "time", at: { x: -1, y: -1, z: 1.28 } },
-    ];
-    for (const s of specs) {
-      const p = this.toScreen(s.at);
-      const arrow = s.key === "intelligence" ? "higher \u2191" : "higher \u2192";
-      ctx.fillStyle = c.fg;
-      ctx.fillText(AXIS_META[s.key].short, p.x, p.y);
-      ctx.fillStyle = c.muted;
-      ctx.font = "10px var(--font-ui, Inter), system-ui, sans-serif";
-      ctx.fillText(scales[s.key].log ? `${arrow} (log)` : arrow, p.x, p.y + 13);
-      ctx.font = "600 12px var(--font-ui, Inter), system-ui, sans-serif";
+    for (const anchor of LABEL_ANCHORS) {
+      const p = this.toScreen(anchor);
+      const meta = AXES[anchor.key];
+      const good = meta.dir > 0;
+      const name = this.compact ? meta.short : meta.label;
+      const cue = good ? meta.better : meta.worse;
+
+      // The anchor sits outside the cube, so on a narrow canvas the text can
+      // run off the edge. Clamp by measured width rather than assuming the fit
+      // left room: the camera decides where these land.
+      ctx.font = TITLE;
+      const wName = ctx.measureText(name).width;
+      ctx.font = SUB;
+      const wCue = ctx.measureText(cue).width;
+      const half = Math.max(wName, wCue) / 2 + 4;
+      const x = Math.min(Math.max(p.x, half), this.width - half);
+      const y = Math.min(Math.max(p.y, 10), this.height - 16);
+
+      ctx.font = TITLE;
+      ctx.fillStyle = c.ink;
+      ctx.fillText(name, x, y);
+      // No arrow here: each name sits at the far end of its own axis, so the
+      // position is the direction. An arrow would have to be redrawn per
+      // camera angle to point along the axis, and points wrongly if it is not.
+      ctx.font = SUB;
+      ctx.fillStyle = good ? c.frontier : c.label;
+      ctx.fillText(cue, x, y + 15);
     }
     ctx.restore();
   }
 
-  drawPoints(c, { emphasiseHidden, dimDominated }) {
+  // ------------------------------------------------------------------- points
+
+  drawPoints(c, is3d) {
     const { ctx } = this;
-    const order = { dominated: 0, front2d: 1, front3d: 2, hidden: 3 };
-    const visible = this.points.filter((p) => !p.hidden);
-    visible.sort((a, b) => order[a.state] - order[b.state] || a.depth - b.depth);
+    const rank = { beaten: 0, frontier: 1, reveal: 2 };
+    const sorted = [...this.points].sort(
+      (a, b) => rank[this.roles.get(a.id)] - rank[this.roles.get(b.id)] || a.depth - b.depth,
+    );
 
-    const flat =
-      Math.abs(Math.sin(this.camera.elevation)) < 0.02 && isAxisAligned(this.camera.azimuth);
+    for (const p of sorted) {
+      const role = this.roles.get(p.id);
+      const fade = is3d ? 0.72 + 0.28 * ((p.depth + 1.8) / 3.6) : 1;
+      const active = p === this.hovered || p === this.selected;
 
-    // Depth is ambiguous in an orthographic 3D view, so anchor the points that
-    // matter to the floor. Dominated points are left out to avoid a thicket.
-    if (!flat) {
-      ctx.save();
-      ctx.strokeStyle = c.muted;
-      ctx.lineWidth = 1;
-      for (const p of visible) {
-        if (p.state === "dominated") continue;
-        const floor = this.toScreen({ x: p.cube.x, y: -1, z: p.cube.z });
-        ctx.globalAlpha = p.state === "hidden" ? 0.3 : 0.16;
-        ctx.beginPath();
-        ctx.moveTo(p.sx, p.sy);
-        ctx.lineTo(floor.x, floor.y);
-        ctx.stroke();
-        ctx.globalAlpha = p.state === "hidden" ? 0.28 : 0.14;
-        ctx.fillStyle = c.muted;
-        dot(ctx, floor.x, floor.y, 1.6);
-      }
-      ctx.restore();
-    }
-
-    for (const p of visible) {
-      const depthCue = 0.82 + 0.18 * ((p.depth + 1.8) / 3.6);
-      const isActive = p === this.hovered || p === this.selected;
-
-      if (p.state === "dominated") {
-        ctx.globalAlpha = (dimDominated ? 0.24 : 0.42) * depthCue;
-        ctx.fillStyle = c.muted;
+      if (role === "beaten") {
+        ctx.globalAlpha = 0.6 * fade;
+        ctx.fillStyle = c.beaten;
         dot(ctx, p.sx, p.sy, 2.4);
-      } else if (p.state === "front2d" || p.state === "front3d") {
-        ctx.globalAlpha = 0.95 * depthCue;
-        ctx.fillStyle = c.accent;
-        dot(ctx, p.sx, p.sy, 4);
-        ctx.globalAlpha = 0.5;
-        ctx.strokeStyle = c.accentInk;
-        ctx.lineWidth = 1;
-        ring(ctx, p.sx, p.sy, 6);
-      } else if (p.state === "hidden") {
-        if (emphasiseHidden) {
-          ctx.globalAlpha = 0.22;
-          ctx.fillStyle = c.highlight;
-          dot(ctx, p.sx, p.sy, 13);
-        }
-        ctx.globalAlpha = 1;
-        ctx.fillStyle = c.highlight;
-        dot(ctx, p.sx, p.sy, 5);
-        ctx.globalAlpha = 0.85;
+      } else {
+        // Shape as well as colour, so a frontier survives both a colour-blind
+        // reader and a compressed screenshot.
+        const reveal = role === "reveal";
+        ctx.globalAlpha = fade;
+        ctx.fillStyle = reveal ? c.reveal : c.frontier;
+        diamond(ctx, p.sx, p.sy, active ? 8 : 6.5);
+        ctx.fill();
         ctx.strokeStyle = c.bg;
         ctx.lineWidth = 1.5;
-        ring(ctx, p.sx, p.sy, 5);
+        ctx.stroke();
       }
 
-      if (isActive) {
+      if (active) {
         ctx.globalAlpha = 1;
-        ctx.strokeStyle = c.fg;
+        ctx.strokeStyle = c.ink;
         ctx.lineWidth = 1.5;
-        ring(ctx, p.sx, p.sy, 10);
+        ring(ctx, p.sx, p.sy, 11);
       }
     }
     ctx.globalAlpha = 1;
   }
-}
 
-function isAxisAligned(azimuth) {
-  const a = Math.abs(((azimuth % (Math.PI * 2)) + Math.PI * 2) % (Math.PI / 2));
-  return a < 0.02 || Math.PI / 2 - a < 0.02;
+  // ------------------------------------------------------------------- labels
+
+  /**
+   * Name the marks directly rather than making the reader hover. On a flat
+   * chart that means the winners of that chart, walked along the frontier so
+   * collision rejection thins them evenly instead of clustering at one end.
+   */
+  drawLabels(c, isFlat) {
+    const { ctx } = this;
+    const boxes = [];
+    const drawn = [];
+
+    const wanted = this.points.filter((p) => {
+      const role = this.roles.get(p.id);
+      return isFlat ? role === "frontier" : role === "reveal";
+    });
+    wanted.sort((a, b) => b.row.intelligence - a.row.intelligence);
+
+    ctx.save();
+    ctx.font = MARK;
+    const dir = isFlat ? this.goodDirection() : { x: 1, y: -1 };
+    for (const p of wanted) {
+      // A narrow canvas cannot carry as many names before they collide into
+      // noise, so the cap tightens with the viewport rather than being fixed.
+      const cap = this.compact ? (isFlat ? 6 : 3) : isFlat ? 14 : 7;
+      if (drawn.length >= cap) break;
+      if (p === this.hovered || p === this.selected) continue;
+      const box = this.placeLabel(p, boxes, ctx, false, dir);
+      if (!box) continue;
+      boxes.push(box);
+      drawn.push({ p, box });
+    }
+
+    for (const { p, box } of drawn) {
+      ctx.globalAlpha = 1;
+      ctx.fillStyle = this.roles.get(p.id) === "reveal" ? c.reveal : c.frontier;
+      ctx.textAlign = "left";
+      ctx.textBaseline = "middle";
+      ctx.fillText(box.text, box.x, box.y + box.h / 2);
+    }
+
+    // The active point is labelled last and unconditionally, on a plate so it
+    // stays legible wherever it lands.
+    const active = this.hovered ?? this.selected;
+    if (active) {
+      ctx.font = `600 11px ${UI}`;
+      const box = this.placeLabel(active, [], ctx, true);
+      if (box) {
+        ctx.globalAlpha = 0.94;
+        ctx.fillStyle = c.bg;
+        roundRect(ctx, box.x - 5, box.y - 3, box.w + 10, box.h + 6, 4);
+        ctx.fill();
+        ctx.globalAlpha = 1;
+        ctx.fillStyle = c.ink;
+        ctx.textAlign = "left";
+        ctx.textBaseline = "middle";
+        ctx.fillText(box.text, box.x, box.y + box.h / 2);
+      }
+    }
+    ctx.restore();
+  }
+
+  /**
+   * Which way the good corner lies, in screen pixels. Labels are pushed that
+   * way because the region beyond the frontier holds no models by definition,
+   * so it is the one part of the plot guaranteed to be free.
+   */
+  goodDirection() {
+    const view = VIEWS[this.viewId];
+    const { hNear, vNear } = this.frame;
+    return {
+      x: betterEnd(view.axes.horizontal) === hNear ? -1 : 1,
+      y: betterEnd(view.axes.vertical) === vNear ? 1 : -1,
+    };
+  }
+
+  placeLabel(p, boxes, ctx, force = false, dir = { x: 1, y: -1 }) {
+    const text = p.row.shortName;
+    const w = ctx.measureText(text).width;
+    const h = 12;
+    const gap = 11;
+    // Ordered best-first: straight along the good direction, then the two
+    // pure axes of it, then the fallbacks that point back into the field.
+    const left = { x: p.sx - gap - w, y: p.sy - h / 2 };
+    const right = { x: p.sx + gap, y: p.sy - h / 2 };
+    const up = { x: p.sx - w / 2, y: p.sy - gap - h };
+    const down = { x: p.sx - w / 2, y: p.sy + gap };
+    const near = dir.x < 0 ? left : right;
+    const far = dir.x < 0 ? right : left;
+    const vNearC = dir.y < 0 ? up : down;
+    const vFarC = dir.y < 0 ? down : up;
+    const candidates = [
+      { x: near.x, y: p.sy + dir.y * (gap * 0.7) - h / 2 },
+      near,
+      vNearC,
+      { x: far.x, y: p.sy + dir.y * (gap * 0.7) - h / 2 },
+      far,
+      vFarC,
+    ];
+
+    for (const cand of candidates) {
+      const box = { ...cand, w, h, text };
+      if (
+        box.x < this.plot.x0 - 6 ||
+        box.x + box.w > this.plot.x1 + 6 ||
+        box.y < this.plot.y0 - 2 ||
+        box.y + box.h > this.plot.y1 + 2
+      ) {
+        continue;
+      }
+      if (force) return box;
+      if (boxes.some((b) => overlaps(b, box))) continue;
+      if (this.coversAMark(box, p)) continue;
+      if (this.crossesFrontier(box)) continue;
+      return box;
+    }
+    return force ? { ...candidates[0], w, h, text } : null;
+  }
+
+  /** A label struck through by the frontier line reads as deleted text. */
+  crossesFrontier(box) {
+    const path = this.frontierScreen;
+    if (!path) return false;
+    const pad = 3;
+    const r = { x0: box.x - pad, y0: box.y - pad, x1: box.x + box.w + pad, y1: box.y + box.h + pad };
+    for (let i = 1; i < path.length; i++) {
+      if (segmentHitsRect(path[i - 1], path[i], r)) return true;
+    }
+    return false;
+  }
+
+  coversAMark(box, self) {
+    for (const p of this.points) {
+      if (p === self || this.roles.get(p.id) === "beaten") continue;
+      if (p.sx > box.x - 6 && p.sx < box.x + box.w + 6 && p.sy > box.y - 6 && p.sy < box.y + box.h + 6) {
+        return true;
+      }
+    }
+    return false;
+  }
 }
 
 /** Map flat-view (horizontal, vertical) coordinates back into cube space. */
@@ -340,6 +671,36 @@ function cubeFor(view, h, v) {
   axis[view.axes.vertical] = v;
   axis[view.axes.collapsed] = -1;
   return { x: axis.cost, y: axis.intelligence, z: axis.time };
+}
+
+const lerp = (a, b, t) => a + (b - a) * t;
+const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
+
+function overlaps(a, b) {
+  return !(a.x + a.w < b.x - 4 || b.x + b.w < a.x - 4 || a.y + a.h < b.y - 3 || b.y + b.h < a.y - 3);
+}
+
+/**
+ * Segment against rectangle. The frontier is a staircase, so every segment is
+ * axis-aligned and an interval overlap on each axis is an exact test.
+ */
+function segmentHitsRect(a, b, r) {
+  const x0 = Math.min(a.x, b.x);
+  const x1 = Math.max(a.x, b.x);
+  const y0 = Math.min(a.y, b.y);
+  const y1 = Math.max(a.y, b.y);
+  return x0 <= r.x1 && x1 >= r.x0 && y0 <= r.y1 && y1 >= r.y0;
+}
+
+function arrowHead(ctx, at, dx, dy) {
+  const len = 7;
+  const wide = 3.4;
+  ctx.beginPath();
+  ctx.moveTo(at.x + dx * len, at.y - dy * len);
+  ctx.lineTo(at.x - dy * wide, at.y - dx * wide);
+  ctx.lineTo(at.x + dy * wide, at.y + dx * wide);
+  ctx.closePath();
+  ctx.fill();
 }
 
 function dot(ctx, x, y, r) {
@@ -354,6 +715,25 @@ function ring(ctx, x, y, r) {
   ctx.stroke();
 }
 
+function diamond(ctx, x, y, r) {
+  ctx.beginPath();
+  ctx.moveTo(x, y - r);
+  ctx.lineTo(x + r, y);
+  ctx.lineTo(x, y + r);
+  ctx.lineTo(x - r, y);
+  ctx.closePath();
+}
+
+function roundRect(ctx, x, y, w, h, r) {
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.arcTo(x + w, y, x + w, y + h, r);
+  ctx.arcTo(x + w, y + h, x, y + h, r);
+  ctx.arcTo(x, y + h, x, y, r);
+  ctx.arcTo(x, y, x + w, y, r);
+  ctx.closePath();
+}
+
 function line(ctx, a, b) {
   ctx.beginPath();
   ctx.moveTo(a.x, a.y);
@@ -361,4 +741,4 @@ function line(ctx, a, b) {
   ctx.stroke();
 }
 
-export { AXIS_META };
+export { AXES };

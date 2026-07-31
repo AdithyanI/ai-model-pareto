@@ -5,6 +5,7 @@ import {
   paretoFront,
   frontierBreakdown,
   preferenceMap,
+  attainmentPath,
   isComparable,
   OBJECTIVES,
 } from "../web/lib/pareto.mjs";
@@ -135,4 +136,100 @@ test("preferenceMap handles a single frontier point", () => {
 
 test("preferenceMap on an empty front returns empty", () => {
   assert.deepEqual(preferenceMap([], 10), []);
+});
+
+// --- the frontier drawn as a boundary -------------------------------------
+
+test("attainmentPath steps rather than interpolating between models", () => {
+  // Cost on h (good at -1), intelligence on v (good at +1).
+  const pts = [
+    { h: -1, v: -0.5 },
+    { h: 0, v: 0.2 },
+    { h: 1, v: 1 },
+  ];
+  const { line } = attainmentPath(pts, -1, 1);
+
+  // Every segment is axis-aligned: a diagonal would assert a model that the
+  // dataset does not contain.
+  for (let i = 1; i < line.length; i++) {
+    const dh = Math.abs(line[i].h - line[i - 1].h);
+    const dv = Math.abs(line[i].v - line[i - 1].v);
+    assert.ok(dh < 1e-9 || dv < 1e-9, `segment ${i} is diagonal`);
+  }
+
+  // Every input point lies on the boundary.
+  for (const p of pts) {
+    assert.ok(
+      line.some((q) => Math.abs(q.h - p.h) < 1e-9 && Math.abs(q.v - p.v) < 1e-9),
+      `frontier point (${p.h}, ${p.v}) is not on the drawn boundary`,
+    );
+  }
+});
+
+test("attainmentPath is monotone toward the good end of the vertical axis", () => {
+  const pts = [
+    { h: -0.8, v: -1 },
+    { h: 0.1, v: 0 },
+    { h: 0.9, v: 0.7 },
+  ];
+  const { line } = attainmentPath(pts, -1, 1);
+  for (let i = 1; i < line.length; i++) {
+    assert.ok(line[i].v >= line[i - 1].v - 1e-9, "v must never fall as h worsens");
+    assert.ok(line[i].h >= line[i - 1].h - 1e-9, "h must advance toward the bad end");
+  }
+  assert.equal(line[line.length - 1].h, 1, "boundary runs out to the far edge");
+});
+
+test("attainmentPath respects an axis whose good end is the low one", () => {
+  // Cost on h and time on v: both are better when smaller, so the staircase
+  // descends as cost rises and the dominated region is up and to the right.
+  const pts = [
+    { h: -1, v: 0.9 },
+    { h: 0, v: 0.1 },
+    { h: 0.8, v: -0.6 },
+  ];
+  const { line, region } = attainmentPath(pts, -1, -1);
+  for (let i = 1; i < line.length; i++) {
+    assert.ok(line[i].v <= line[i - 1].v + 1e-9, "v must improve downward");
+  }
+  assert.deepEqual(region[region.length - 1], { h: 1, v: 1 }, "region closes at the worst corner");
+});
+
+test("attainmentPath keeps only the best point where two share a position", () => {
+  const pts = [
+    { h: -0.5, v: 0.1 },
+    { h: -0.5, v: 0.6 },
+    { h: 0.5, v: 0.9 },
+  ];
+  const { line } = attainmentPath(pts, -1, 1);
+  assert.ok(
+    !line.some((q) => Math.abs(q.h + 0.5) < 1e-9 && Math.abs(q.v - 0.1) < 1e-9),
+    "the worse of two points at the same h must not appear on the boundary",
+  );
+});
+
+test("attainmentPath tolerates degenerate input", () => {
+  assert.deepEqual(attainmentPath([], -1, 1), { line: [], region: [] });
+  const single = attainmentPath([{ h: 0, v: 0 }], -1, 1);
+  assert.equal(single.line.length, 3, "one point still yields a drawable boundary");
+});
+
+test("the drawn boundary uses exactly the computed 2D front", () => {
+  // Guards the join between dominance and drawing: anything the front excludes
+  // must not end up as a corner of the staircase.
+  const rows = [
+    row("a", 60, 4, 9),
+    row("b", 50, 1, 9),
+    row("c", 30, 0.2, 9),
+    row("dominated", 40, 3, 9),
+  ];
+  const front = paretoFront(rows, [intelligence, cost]);
+  assert.equal(front.length, 3);
+  const pts = front.map((r) => ({ h: Math.log10(r.cost) / 2, v: r.intelligence / 60 }));
+  const { line } = attainmentPath(pts, -1, 1);
+  const beaten = { h: Math.log10(3) / 2, v: 40 / 60 };
+  assert.ok(
+    !line.some((q) => Math.abs(q.h - beaten.h) < 1e-9 && Math.abs(q.v - beaten.v) < 1e-9),
+    "a dominated model must not appear as a corner of the frontier",
+  );
 });
