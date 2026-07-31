@@ -1,0 +1,11 @@
+{
+  "name": "ai-model-pareto",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test \"test/*.test.mjs\"",
+    "snapshot": "node src/build-snapshot.mjs",
+    "build": "node src/build-site.mjs",
+    "dev": "node src/serve.mjs"
+  }
+}

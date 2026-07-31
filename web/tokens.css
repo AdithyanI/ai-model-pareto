@@ -1,0 +1,200 @@
+/* Adi Design — design tokens (vendored copy).
+ *
+ * SOURCE OF TRUTH: ~/GitHub/adi-design (system/styles.css + system/tokens/*.css),
+ * browsable at https://design.adithyan.io. Authored in the Claude Design project,
+ * exported into that repo. This is a VENDORED COPY for agents building Adi's UIs
+ * without cloning the repo — refresh it from system/styles.css when VERSION bumps.
+ *
+ * Color space is oklch throughout. Light is default; dark overrides via
+ * prefers-color-scheme. Reference tokens (var(--accent), --space-lg) — never raw
+ * hex/oklch literals.
+ *
+ * Vendored consumers (keep in step with the canon, not with each other):
+ *   - ~/GitHub/agents dashboard, dobby-dashboard: plain CSS / inline oklch
+ *   - blog-personal, aipodcasting-website: HSL conversion, shadcn names; they
+ *     collapse base+ink into one --primary — use the -ink depth there (the
+ *     lighter fill fails AA as button/link text).
+ *
+ * Product-specific tokens (an app's chart series, a map's phase colors) do NOT
+ * belong here — keep those in a small per-product tokens.local.css layered after.
+ */
+
+/* === fonts === */
+/* Adi Design — webfonts.
+ *
+ * Newsreader (serif, reading + titles) and Inter (sans, all UI chrome).
+ * Mono is the system stack — no webfont needed.
+ *
+ * NOTE: Adi's products self-host these via @fontsource-variable/*. Here they
+ * load from Google Fonts (same families, identical metrics) so the design
+ * system previews and consumer copies work with no binaries to ship. If you
+ * need fully offline/self-hosted fonts, drop the .woff2 files in assets/fonts/
+ * and replace these imports with local @font-face rules.
+ */
+
+@import url("https://fonts.googleapis.com/css2?family=Newsreader:ital,opsz,wght@0,6..72,400..600;1,6..72,400..600&family=Inter:wght@400;450;500;550;600;650&display=swap");
+
+/* === colors === */
+/* Adi Design — color tokens.
+ *
+ * Clean off-white whisper-tinted toward sage. Never warm cream/sand/paper.
+ * One accent (sage). Amber is secondary/contextual; rose is rare.
+ * oklch throughout. Light is default; dark overrides via prefers-color-scheme.
+ *
+ * base = fills, large accents, hairlines, soft bg, state behind dark text.
+ * -ink = AA-safe depth for colored TEXT (links, labels) + white-on-color buttons.
+ *        Use -ink whenever a brand color is small text; base fails 4.5:1 there.
+ */
+
+:root {
+  /* --- Neutrals: clean off-white, whisper-tinted toward the sage hue. --- */
+  --bg: oklch(0.977 0.004 150);
+  --surface: oklch(0.993 0.003 150);
+  --surface-soft: oklch(0.958 0.006 150);
+  --text: oklch(0.27 0.014 152);
+  --muted: oklch(0.47 0.013 152);
+  --faint: oklch(0.6 0.011 152);
+  --line: oklch(0.9 0.006 152);
+  --line-soft: oklch(0.93 0.005 152);
+
+  /* --- Accent: sage. The single accent — action, selection, focus, state.
+   *     Calm and muted so the green never reads harsh, with a little life kept
+   *     in. Reconciled to the master in v1.1.0. --- */
+  --accent: oklch(0.57 0.068 150);
+  --accent-ink: oklch(0.44 0.066 150);
+  --accent-soft: oklch(0.935 0.026 150);
+  --accent-line: oklch(0.79 0.05 150);
+
+  /* --- Secondary: amber. The golden light through the leaves: a warm, true
+   *     gold — present but never a flood. Warm without going honey-heavy or
+   *     orange. Reconciled to the master in v1.1.0. --- */
+  --amber: oklch(0.75 0.108 83);
+  --amber-ink: oklch(0.47 0.085 78);
+  --amber-soft: oklch(0.935 0.05 84);
+  --amber-line: oklch(0.82 0.085 82);
+
+  /* --- Rose (clay): rare emphasis / "needs a look" / failed state. An earthy
+   *     brick red — bark and fallen leaves — so the alert belongs to the forest
+   *     palette instead of reading as a cool clinical pink. --- */
+  --rose: oklch(0.6 0.12 35);
+  --rose-ink: oklch(0.48 0.11 37);
+  --rose-soft: oklch(0.945 0.035 40);
+  --rose-line: oklch(0.85 0.06 38);
+
+  /* Text/icon color on a filled accent or rose button (flips per mode so a
+   * light-on-dark or dark-on-light fill always stays legible). */
+  --on-fill: oklch(0.99 0.002 150);
+
+  /* --- Focus ring. --- */
+  --focus-ring: 2px solid var(--accent);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    /* Warm-neutral charcoal — not green, not pure black. */
+    --bg: oklch(0.173 0.005 152);
+    --surface: oklch(0.213 0.006 152);
+    --surface-soft: oklch(0.255 0.008 152);
+    --text: oklch(0.93 0.006 150);
+    --muted: oklch(0.71 0.009 150);
+    --faint: oklch(0.56 0.008 150);
+    --line: oklch(0.32 0.007 152);
+    --line-soft: oklch(0.28 0.006 152);
+
+    --accent: oklch(0.78 0.068 150);
+    --accent-ink: oklch(0.85 0.064 150);
+    --accent-soft: oklch(0.3 0.035 150);
+    --accent-line: oklch(0.47 0.05 150);
+
+    --amber: oklch(0.85 0.11 83);
+    --amber-ink: oklch(0.88 0.095 81);
+    --amber-soft: oklch(0.36 0.06 83);
+    --amber-line: oklch(0.57 0.08 82);
+
+    --rose: oklch(0.72 0.11 38);
+    --rose-ink: oklch(0.8 0.1 40);
+    --rose-soft: oklch(0.31 0.04 36);
+    --rose-line: oklch(0.5 0.06 38);
+    --on-fill: oklch(0.2 0.005 152);
+  }
+}
+
+/* === typography === */
+/* Adi Design — typography tokens.
+ *
+ * Three families, hard cap. Newsreader (serif) for reading prose, page titles,
+ * detail headings. Inter (sans) for all UI chrome, labels, metadata, controls.
+ * System mono for code/ids. Hierarchy from scale + weight, never new fonts.
+ * Fixed-rem scale, ~1.18 ratio (not fluid clamp).
+ */
+
+:root {
+  --font-serif: "Newsreader", ui-serif, Georgia, "Times New Roman", serif;
+  --font-sans: "Inter", -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", sans-serif;
+  --font-mono: "SF Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+
+  --font-micro: 0.69rem;
+  --font-xxs: 0.74rem;
+  --font-xs: 0.79rem;
+  --font-sm: 0.85rem;
+  --font-md: 0.92rem;
+  --font-body: 0.95rem;
+  --font-read: 1.04rem;
+  --font-lg: 1.2rem;
+  --font-xl: 1.42rem;
+  --font-page: 1.6rem;
+
+  --leading-tight: 1.2;
+  --leading-copy: 1.55;
+  --leading-read: 1.68;
+
+  --weight-label: 550;
+  --weight-strong: 600;
+}
+
+/* === spacing === */
+/* Adi Design — spacing tokens.
+ *
+ * Spacing rhythm: 4, 8, 12, 18, 28, 44. Vary it for rhythm; don't pad
+ * everything to one value.
+ */
+
+:root {
+  --space-xs: 4px;
+  --space-sm: 8px;
+  --space-md: 12px;
+  --space-lg: 18px;
+  --space-xl: 28px;
+  --space-xxl: 44px;
+}
+
+/* === shape === */
+/* Adi Design — shape tokens.
+ *
+ * Radius: controls 8, cards/panels 14, large reading frames 18, pills round.
+ * Cards never exceed ~16. Flat elevation — hairline borders for structure,
+ * never a 1px border paired with a >=16px drop shadow (the ghost-card tell).
+ */
+
+:root {
+  --radius-sm: 8px;
+  --radius: 14px;
+  --radius-lg: 18px;
+  --radius-pill: 999px;
+}
+
+/* === motion === */
+/* Adi Design — motion + layering tokens.
+ *
+ * Restrained and state-only: hover, selection, overlay enter. Ease out,
+ * no bounce, no elastic. Every animation needs a prefers-reduced-motion path.
+ */
+
+:root {
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1); /* @kind other */
+  --t-fast: 150ms; /* @kind other */
+  --t-mid: 220ms; /* @kind other */
+
+  --z-sticky: 100; /* @kind other */
+  --z-overlay: 400; /* @kind other */
+}

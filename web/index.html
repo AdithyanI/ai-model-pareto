@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Two charts, one object &middot; the AI model trade-off in three dimensions</title>
+    <meta
+      name="description"
+      content="Intelligence, cost and speed are usually shown as two flat charts. They are two camera angles on a single three-dimensional object, and some genuinely optimal models are invisible in both."
+    />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;1,6..72,400&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="./tokens.css" />
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <main>
+      <header class="masthead">
+        <p class="eyebrow">Model selection</p>
+        <h1>Two charts, one object</h1>
+        <p class="standfirst">
+          Intelligence, cost and speed get published as two flat scatter plots. They are not two
+          charts. They are two camera angles on the same three-dimensional object, and once you
+          rotate it, a set of genuinely optimal models appears that neither flat view can show.
+        </p>
+      </header>
+
+      <section class="stage" aria-label="Interactive model trade-off explorer">
+        <div class="stage-bar">
+          <div id="views" class="views" role="group" aria-label="Camera angle"></div>
+          <p id="view-caption" class="view-caption"></p>
+        </div>
+
+        <div class="canvas-wrap">
+          <canvas id="plot" role="img" aria-label="Scatter plot of AI models by intelligence, cost and response time"></canvas>
+          <div id="tooltip" class="tooltip" hidden></div>
+          <p class="drag-hint">Drag to rotate freely &middot; arrow keys change view</p>
+        </div>
+
+        <div id="legend" class="legend"></div>
+
+        <div class="controls">
+          <label class="control">
+            <span>Latency measure</span>
+            <select id="latency"></select>
+          </label>
+          <label class="control">
+            <span>Configurations shown</span>
+            <select id="scope">
+              <option value="representative">Best host per model</option>
+              <option value="all">Every model and host</option>
+              <option value="open">Open-weights only</option>
+            </select>
+          </label>
+          <label class="control control-check">
+            <input type="checkbox" id="toggle-hidden" checked />
+            <span>Halo the 3D-only winners</span>
+          </label>
+          <label class="control control-check">
+            <input type="checkbox" id="toggle-dim" checked />
+            <span>Fade dominated models</span>
+          </label>
+        </div>
+        <p id="latency-hint" class="hint"></p>
+      </section>
+
+      <section class="readout">
+        <div id="stats" class="stats"></div>
+        <div id="detail" class="detail"></div>
+      </section>
+
+      <section class="prose">
+        <h2>What the flat charts cannot say</h2>
+        <p id="front-note" class="note"></p>
+        <p>
+          A model is worth considering when nothing else is at least as good on every axis you care
+          about. On a flat chart that test only runs on two axes, so a model can be discarded for
+          being slow by a chart that never measured its price, and discarded for being expensive by
+          a chart that never measured its speed. Judge all three together and it survives.
+        </p>
+        <p>
+          That is the amber set above. Those configurations are not compromises. They are the
+          options you can only see by rotating the object, and they are exactly the ones a
+          two-chart reading throws away.
+        </p>
+        <h2>How to read it honestly</h2>
+        <p>
+          Points are model configurations on a specific host, because price and latency belong to
+          the host rather than the model. Cost and time use logarithmic axes; the field spans orders
+          of magnitude and a linear axis would crush everything cheap into the margin. Nothing is
+          interpolated: the space between points contains no models, only empty space.
+        </p>
+        <p id="meta" class="meta"></p>
+      </section>
+    </main>
+    <script type="module" src="./app.mjs"></script>
+  </body>
+</html>
