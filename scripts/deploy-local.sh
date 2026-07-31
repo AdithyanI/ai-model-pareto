@@ -65,10 +65,17 @@ echo "    local ok"
 
 if [[ "${CHECK_PUBLIC}" -eq 1 ]]; then
   echo "==> smoke public"
-  if curl -fsS -o /dev/null "${PUBLIC_URL}"; then
+  # The tunnel can take a moment to notice the origin came back, so a single
+  # shot here reports a failure that is not real. Retry briefly before warning.
+  public_ok=0
+  for _ in 1 2 3 4 5 6; do
+    if curl -fsS -o /dev/null --max-time 10 "${PUBLIC_URL}"; then public_ok=1; break; fi
+    sleep 2
+  done
+  if [[ "${public_ok}" -eq 1 ]]; then
     echo "    ${PUBLIC_URL} ok"
   else
-    echo "    WARNING: ${PUBLIC_URL} not reachable; check the shared tunnel" >&2
+    echo "    WARNING: ${PUBLIC_URL} not reachable after 6 tries; check the shared tunnel" >&2
   fi
 fi
 

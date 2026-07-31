@@ -116,7 +116,7 @@ render_plist() {
     <key>KeepAlive</key>
     <true/>
     <key>ThrottleInterval</key>
-    <integer>60</integer>
+    <integer>10</integer>
     <key>StandardOutPath</key>
     <string>$(xml_escape "$OUT_LOG")</string>
     <key>StandardErrorPath</key>
@@ -170,11 +170,19 @@ render_plist >"${PLIST_PATH}"
 chmod 0644 "${PLIST_PATH}"
 
 launchctl bootout "${DOMAIN}" "${PLIST_PATH}" >/dev/null 2>&1 || true
+# bootstrap honours RunAtLoad, so this starts the service on its own. Do NOT
+# add a `kickstart -k` here: it kills the process bootstrap just started, and
+# because that process has run for less than ThrottleInterval, launchd delays
+# the respawn by the full throttle window. That produced a real ~60s 502 on
+# pareto.adithyan.io during a deploy on 2026-07-31.
 launchctl bootstrap "${DOMAIN}" "${PLIST_PATH}"
-launchctl kickstart -k "${DOMAIN}/${LABEL}" >/dev/null 2>&1 || true
 
 echo "Loaded ${LABEL} from ${PLIST_PATH}"
 if ! wait_for_health "${HEALTH_WAIT_SECONDS}"; then
-  echo "WARNING: local health did not become ready within ${HEALTH_WAIT_SECONDS}s" >&2
+  echo "ERROR: ${LOCAL_HEALTH_URL} did not respond within ${HEALTH_WAIT_SECONDS}s." >&2
+  echo "       The site is likely serving 502 right now. Recent log lines:" >&2
+  tail -n 15 "${ERR_LOG}" >&2 2>/dev/null || true
+  print_status >&2
+  exit 1
 fi
 print_status
